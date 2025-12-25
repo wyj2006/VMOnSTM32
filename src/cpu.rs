@@ -2,6 +2,11 @@ use bitfield::bitfield;
 
 use crate::machine::Machine;
 
+//P45
+pub const SP_INDEX: usize = 13;
+pub const LR_INDEX: usize = 14;
+pub const PC_INDEX: usize = 15;
+
 /* P49
 Application Program Status Register
 31 30 29 28 27 26      24 23               20 19     16 15                   0
@@ -76,10 +81,6 @@ bitfield! {
 }
 
 pub struct CPU {
-    //P45
-    pub sp_index: usize, //SP寄存器索引
-    pub lr_index: usize, //LR寄存器索引
-    pub pc_index: usize, //PC寄存器索引
     pub regs: [u32; 16],
     pub cpsr: CPSRegister,
 }
@@ -87,9 +88,6 @@ pub struct CPU {
 impl Default for CPU {
     fn default() -> Self {
         CPU {
-            sp_index: 13,
-            lr_index: 14,
-            pc_index: 15,
             regs: [0; 16],
             cpsr: CPSRegister::default(),
         }

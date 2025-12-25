@@ -3,7 +3,6 @@
 
 pub mod arithmetic;
 pub mod cpu;
-pub mod instruction;
 pub mod machine;
 pub mod memory;
 
