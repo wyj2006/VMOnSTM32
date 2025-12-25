@@ -1,0 +1,30 @@
+[package]
+name = "vm_on_stm32"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bitfield = "0.19.4"
+cortex-m = "0.6.2"
+cortex-m-rt = "0.7.5"
+cortex-m-semihosting = "0.5.0"
+linked_list_allocator = "0.10.5"
+nb = "1.1.0"
+stm32f1xx-hal = { version = "0.11.0", features = ["high", "stm32f103"] }
+
+[dependencies.bitvec]
+version = "1.0.1"
+default-features = false
+features = ["atomic","alloc"]
+
+[dependencies.funty]
+version = "2.0.0"
+default-features = false
+
+[dependencies.yaxpeax-arm]
+version = "0.4.0"
+default-features = false
+
+[dependencies.yaxpeax-arch]
+version = "0.3.2"
+default-features = false
