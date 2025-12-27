@@ -31,6 +31,8 @@ bitfield! {
     pub struct ITRegister(u8);
 }
 
+pub struct ITRegisterMut<'a>(&'a mut CPSRegister);
+
 /* P50
 Instruction set state register, ISETSTATE
 1 0
@@ -70,8 +72,10 @@ bitfield! {
     pub c, set_c: 29;
     pub v, set_v: 28;
     pub q, set_q: 27;
+    pub it_low, set_it_low: 26,25;
     pub j, set_j: 24;
     pub ge, set_ge: 19, 16;
+    pub it_high, set_it_high: 15,10;
     pub e, set_e: 9;
     pub a, set_a: 8;
     pub i, set_i: 7;
@@ -107,6 +111,10 @@ impl CPU {
         ITRegister(self.cpsr.it())
     }
 
+    pub fn it_state_mut(&mut self) -> ITRegisterMut<'_> {
+        ITRegisterMut(&mut self.cpsr)
+    }
+
     pub fn iset_state(&self) -> ISetRegister {
         ISetRegister((self.cpsr.j() as u8) << 1 | self.cpsr.t() as u8)
     }
@@ -118,7 +126,12 @@ impl CPU {
 
 impl CPSRegister {
     pub fn it(&self) -> u8 {
-        ((self.0 >> 10 & 0b111111) << 2 | self.0 >> 25 & 0b11) as u8
+        (self.it_high() << 2 | self.it_low()) as u8
+    }
+
+    pub fn set_it(&mut self, bit: u8) {
+        self.set_it_low((bit & 0b11) as u32);
+        self.set_it_high((bit >> 2) as u32);
     }
 }
 
@@ -138,9 +151,9 @@ impl Default for CPSRegister {
 }
 
 impl ISetRegisterMut<'_> {
-    pub fn set_bit(&mut self, bit: u8) {
-        self.0.set_j(bit >> 1 & 1 == 1);
-        self.0.set_t(bit & 1 == 1);
+    pub fn set_value(&mut self, value: u8) {
+        self.0.set_j(value >> 1 & 1 == 1);
+        self.0.set_t(value & 1 == 1);
     }
 }
 
@@ -170,6 +183,12 @@ impl APSRegisterMut<'_> {
     }
 }
 
+impl ITRegisterMut<'_> {
+    pub fn set_value(&mut self, value: u8) {
+        self.0.set_it(value);
+    }
+}
+
 impl Machine {
     //P52
     pub fn in_it_block(&self) -> bool {
@@ -191,10 +210,10 @@ impl Machine {
     pub fn select_instr_set(&mut self, iset: InstrSet) {
         let mut iset_state = self.cpu.iset_state_mut();
         match iset {
-            InstrSet::Arm => iset_state.set_bit(0b00),
-            InstrSet::Thumb => iset_state.set_bit(0b01),
-            InstrSet::Jazelle => iset_state.set_bit(0b10),
-            InstrSet::ThumbEE => iset_state.set_bit(0b11),
+            InstrSet::Arm => iset_state.set_value(0b00),
+            InstrSet::Thumb => iset_state.set_value(0b01),
+            InstrSet::Jazelle => iset_state.set_value(0b10),
+            InstrSet::ThumbEE => iset_state.set_value(0b11),
         }
     }
 }

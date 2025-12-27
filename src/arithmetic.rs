@@ -102,3 +102,12 @@ pub fn add_with_carry(x: u32, y: u32, carry_in: bool) -> (u32, bool, bool) {
     let overflow = (result as i32) != signed_num;
     (result, carry_out, overflow)
 }
+
+//P2368
+pub fn bit_count(x: u32) -> u32 {
+    let mut count = 0;
+    for i in 0..32 {
+        count += x >> i & 1;
+    }
+    count
+}

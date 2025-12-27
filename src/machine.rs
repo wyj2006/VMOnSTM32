@@ -1,10 +1,8 @@
 use yaxpeax_arch::{Decoder, ReadError, Reader};
-use yaxpeax_arm::armv7::{
-    ConditionCode, InstDecoder, Instruction, Opcode, Operand, RegShiftStyle, ShiftStyle,
-};
+use yaxpeax_arm::armv7::{ConditionCode, InstDecoder, Operand, RegShiftStyle};
 
 use crate::arithmetic::*;
-use crate::cpu::{CPU, InstrSet, LR_INDEX, PC_INDEX};
+use crate::cpu::{CPU, InstrSet, PC_INDEX};
 use crate::memory::Memory;
 
 pub struct Machine {
@@ -125,6 +123,15 @@ impl Machine {
         }
     }
 
+    //P47
+    pub fn load_write_pc(&mut self, address: u32) {
+        if self.arch_version >= 5 {
+            self.bw_write_pc(address);
+        } else {
+            self.branch_write_pc(address);
+        }
+    }
+
     //1147
     pub fn branch_to(&mut self, address: u32) {
         self.cpu.regs[PC_INDEX] = address;
@@ -133,6 +140,31 @@ impl Machine {
     // P2641
     pub fn align(&self, address: u32, alignment: u32) -> u32 {
         (address + alignment - 1) & !(alignment - 1)
+    }
+
+    pub fn read_address(&self, operand: Operand) -> u32 {
+        match operand {
+            Operand::RegDeref(reg) => self.cpu.regs[reg.number() as usize],
+            Operand::RegDerefPostindexOffset(reg, ..) => self.cpu.regs[reg.number() as usize],
+            Operand::RegDerefPostindexReg(reg, ..) => self.cpu.regs[reg.number() as usize],
+            Operand::RegDerefPostindexRegShift(reg, ..) => self.cpu.regs[reg.number() as usize],
+            Operand::RegDerefPreindexOffset(reg, offset, add, ..) => {
+                let a = self.cpu.regs[reg.number() as usize];
+                let b = offset as u32;
+                if add { a + b } else { a - b }
+            }
+            Operand::RegDerefPreindexReg(reg, reg2, add, ..) => {
+                let a = self.cpu.regs[reg.number() as usize];
+                let b = self.cpu.regs[reg2.number() as usize];
+                if add { a + b } else { a - b }
+            }
+            Operand::RegDerefPreindexRegShift(reg, reg_shift, add, ..) => {
+                let a = self.cpu.regs[reg.number() as usize];
+                let b = self.read(Operand::RegShift(reg_shift));
+                if add { a + b } else { a - b }
+            }
+            _ => unreachable!(),
+        }
     }
 
     pub fn read(&self, operand: Operand) -> u32 {
@@ -164,7 +196,22 @@ impl Machine {
                 )
             }
             // u32 as i32和i32 as u32都只改变解释方式
-            Operand::BranchThumbOffset(value) => value as u32,
+            Operand::BranchOffset(value) => (value << 2) as u32,
+            Operand::BranchThumbOffset(value) => (value << 1) as u32,
+            Operand::RegWBack(reg, _wback) => self.cpu.regs[reg.number() as usize],
+            Operand::RegList(registers) => registers as u32,
+            Operand::RegDeref(..)
+            | Operand::RegDerefPostindexOffset(..)
+            | Operand::RegDerefPostindexReg(..)
+            | Operand::RegDerefPostindexRegShift(..)
+            | Operand::RegDerefPreindexOffset(..)
+            | Operand::RegDerefPreindexReg(..)
+            | Operand::RegDerefPreindexRegShift(..) => {
+                self.read_memory_word(self.read_address(operand))
+            }
+            Operand::APSR => self.cpu.apsr().0,
+            Operand::CPSR => self.cpu.cpsr.0,
+            Operand::SPSR => unimplemented!(), //TODO Operand::SPSR
             _ => unimplemented!(),
         }
     }
@@ -172,7 +219,41 @@ impl Machine {
     pub fn write(&mut self, operand: Operand, value: u32) {
         match operand {
             Operand::Reg(reg) => self.cpu.regs[reg.number() as usize] = value,
-            _ => unreachable!(),
+            Operand::RegWBack(reg, true) => self.cpu.regs[reg.number() as usize] = value,
+            Operand::RegDerefPostindexOffset(reg, offset, add, true) => {
+                let reg = Operand::Reg(reg);
+                let b = offset as u32;
+                if add {
+                    self.write(reg, value + b);
+                } else {
+                    self.write(reg, value - b);
+                }
+            }
+            Operand::RegDerefPostindexReg(reg, reg2, add, true) => {
+                let reg = Operand::Reg(reg);
+                let b = self.cpu.regs[reg2.number() as usize];
+                if add {
+                    self.write(reg, value + b);
+                } else {
+                    self.write(reg, value - b);
+                }
+            }
+            Operand::RegDerefPostindexRegShift(reg, reg_shift, add, true) => {
+                let reg = Operand::Reg(reg);
+                let b = self.read(Operand::RegShift(reg_shift));
+                if add {
+                    self.write(reg, value + b);
+                } else {
+                    self.write(reg, value - b);
+                }
+            }
+            Operand::RegDerefPreindexOffset(reg, .., true) => self.write(Operand::Reg(reg), value),
+            Operand::RegDerefPreindexReg(reg, .., true) => self.write(Operand::Reg(reg), value),
+            Operand::RegDerefPreindexRegShift(reg, .., true) => {
+                self.write(Operand::Reg(reg), value)
+            }
+            Operand::StatusRegMask(..) => {} //TODO StatusRegMask
+            _ => {}
         }
     }
 
@@ -189,186 +270,6 @@ impl Machine {
                 Err(_) => todo!(), //TODO 处理非法的指令
             };
             self.execute(instruction);
-        }
-    }
-
-    pub fn execute(&mut self, instruction: Instruction) {
-        match instruction.opcode {
-            Opcode::BKPT => {
-                /*TODO BKPT */
-                return;
-            }
-            Opcode::CBNZ | Opcode::CBZ => {
-                let nonzero = instruction.opcode == Opcode::CBNZ;
-                let n = self.read(instruction.operands[0]);
-                let m = self.read(instruction.operands[1]); //i32
-                if nonzero != (n == 0) {
-                    self.branch_write_pc(self.cpu.regs[PC_INDEX] + m);
-                }
-                return;
-            }
-            _ => {}
-        }
-        if !self.condition_passed(instruction.condition) {
-            return;
-        }
-        match instruction.opcode {
-            Opcode::ADC | Opcode::ADD | Opcode::AND | Opcode::ASR | Opcode::BIC => {
-                let d;
-                let n;
-                let m;
-                if let Operand::Nothing = instruction.operands[2] {
-                    // Opcode <Rdn>, <Rm>的形式
-                    d = instruction.operands[0];
-                    n = instruction.operands[0];
-                    m = instruction.operands[1];
-                } else {
-                    d = instruction.operands[0];
-                    n = instruction.operands[1];
-                    m = instruction.operands[2];
-                }
-                let n = self.read(n);
-                let m = self.read(m);
-
-                let (result, carry, overflow) = match instruction.opcode {
-                    Opcode::ADC | Opcode::ADD => add_with_carry(
-                        n,
-                        m,
-                        if let Opcode::ADC = instruction.opcode {
-                            self.cpu.apsr().c()
-                        } else {
-                            false
-                        },
-                    ),
-                    Opcode::AND => (n & m, false, self.cpu.apsr().v()), //TODO carry
-                    Opcode::ASR => {
-                        let (result, carry) = shift_c(n, ShiftStyle::ASR, m, self.cpu.apsr().c());
-                        (result, carry, self.cpu.apsr().v())
-                    }
-                    Opcode::BIC => (n & !m, false, self.cpu.apsr().v()), //TODO carry
-                    _ => unreachable!(),
-                };
-                let Operand::Reg(reg) = d else {
-                    unreachable!();
-                };
-                let reg_index = reg.number() as usize;
-                if reg_index == PC_INDEX {
-                    //Can only occur for ARM encoding
-                    self.alu_write_pc(result); // setflags is always FALSE here
-                } else {
-                    self.write(d, result);
-                }
-                if instruction.s {
-                    let mut apsr = self.cpu.apsr_mut();
-                    apsr.set_n(result >> 31 & 1 == 1);
-                    apsr.set_z(result != 0);
-                    apsr.set_c(carry);
-                    apsr.set_v(overflow);
-                }
-            }
-            Opcode::ADR => {
-                let d = instruction.operands[0];
-                let n = instruction.operands[1];
-                let result = self.align(self.cpu.regs[PC_INDEX], 4) + self.read(n);
-                let Operand::Reg(reg) = d else {
-                    unreachable!();
-                };
-                let reg_index = reg.number() as usize;
-                if reg_index == PC_INDEX {
-                    self.alu_write_pc(result);
-                } else {
-                    self.write(d, result);
-                }
-            }
-            Opcode::B => {
-                let imm32 = self.read(instruction.operands[0]); //i32
-                self.branch_write_pc(self.cpu.regs[PC_INDEX] + imm32);
-            }
-            Opcode::BFC => {
-                //将Rd的lsbit..msbit部分清0
-                //operands[1]是将msbit作为寄存器索引了
-                let d = instruction.operands[0];
-                let lsbit = self.read(instruction.operands[2]);
-                let msbit = self.read(instruction.operands[3]);
-                if msbit >= lsbit {
-                    let bits = self.read(d);
-                    let width = (msbit - lsbit + 1) as u32;
-                    let mask = ((1 << width) - 1) << lsbit;
-                    let bits = bits & !mask;
-                    self.write(d, bits);
-                }
-            }
-            Opcode::BFI => {
-                //将Rd的lsbit..msbit部分用Rn的0..(msbit-lsbit)替换
-                let d = instruction.operands[0];
-                let n = instruction.operands[1];
-                let lsbit = self.read(instruction.operands[2]);
-                let msbit = self.read(instruction.operands[3]);
-                if msbit >= lsbit {
-                    let bits = self.read(d);
-                    let width = (msbit - lsbit + 1) as u32;
-                    let mask = ((1 << width) - 1) << lsbit;
-                    let bits = bits & (!mask | self.read(n) << lsbit);
-                    self.write(d, bits);
-                }
-            }
-            Opcode::BKPT => unreachable!(),
-            Opcode::BL | Opcode::BLX => match instruction.operands[0] {
-                Operand::BranchThumbOffset(imm32) => {
-                    let imm32 = imm32 as u32; //i32
-                    if let InstrSet::Arm = self.current_instr_set() {
-                        self.cpu.regs[LR_INDEX] = self.cpu.regs[PC_INDEX] - 4;
-                    } else {
-                        self.cpu.regs[LR_INDEX] = self.cpu.regs[PC_INDEX] | 1;
-                    }
-                    let target_instr_set = InstrSet::Arm; //TODO 确定target_instr_set
-                    let target_address;
-                    if let InstrSet::Arm = target_instr_set {
-                        target_address = self.align(self.cpu.regs[PC_INDEX], 4) + imm32;
-                    } else {
-                        target_address = self.cpu.regs[PC_INDEX] + imm32;
-                    }
-                    self.select_instr_set(target_instr_set);
-                    self.branch_write_pc(target_address);
-                }
-                Operand::Reg(reg) => {
-                    let target = self.cpu.regs[reg.number() as usize];
-                    if let InstrSet::Arm = self.current_instr_set() {
-                        self.cpu.regs[LR_INDEX] = self.cpu.regs[PC_INDEX] - 4;
-                    } else {
-                        self.cpu.regs[LR_INDEX] = (self.cpu.regs[PC_INDEX] - 2) | 1;
-                    }
-                    self.bw_write_pc(target);
-                }
-                _ => unreachable!(),
-            },
-            Opcode::BX => self.bw_write_pc(self.read(instruction.operands[0])),
-            Opcode::BXJ => unimplemented!(), //跳转到Jazelle状态, 但目前只支持Arm和Thumb
-            Opcode::CBNZ | Opcode::CBZ => unreachable!(),
-            Opcode::CDP2(_coproc, _opc1, _opc2) => unimplemented!(), //TODO 协处理器
-            Opcode::CLREX => unimplemented!(),                       //TODO CLREX 特权指令
-            Opcode::CLZ => {
-                let d = instruction.operands[0];
-                let m = self.read(instruction.operands[1]);
-                self.write(d, m.leading_zeros());
-            }
-            Opcode::CMN | Opcode::CMP => {
-                let n = self.read(instruction.operands[0]);
-                let m = self.read(instruction.operands[1]);
-                let (result, carry, overflow) = match instruction.opcode {
-                    Opcode::CMN => add_with_carry(n, m, false),
-                    Opcode::CMP => add_with_carry(n, !m, true),
-                    _ => unreachable!(),
-                };
-                let mut apsr = self.cpu.apsr_mut();
-                apsr.set_n(result >> 31 & 1 == 1);
-                apsr.set_z(result != 0);
-                apsr.set_c(carry);
-                apsr.set_v(overflow);
-            }
-            Opcode::CPS(_im) => todo!(),     //TODO CPS P1964 P1966
-            Opcode::CPS_modeonly => todo!(), //TODO
-            _ => unimplemented!(),
         }
     }
 }
