@@ -6,19 +6,28 @@ pub mod cpu;
 pub mod executor;
 pub mod machine;
 pub mod memory;
+pub mod protocol;
+pub mod vmerror;
 
+use core::cell::RefCell;
 use core::panic::PanicInfo;
+use cortex_m::interrupt;
+use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
 use linked_list_allocator::LockedHeap;
 use stm32f1xx_hal::pac;
 use stm32f1xx_hal::prelude::*;
 use stm32f1xx_hal::rcc;
 use stm32f1xx_hal::serial;
+use stm32f1xx_hal::serial::Serial;
 
 use crate::machine::Machine;
 
+pub type SerialType = Serial<pac::USART2>;
+
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
+pub static SERIAL: Mutex<RefCell<Option<SerialType>>> = Mutex::new(RefCell::new(None));
 
 #[entry]
 fn main() -> ! {
@@ -35,11 +44,14 @@ fn main() -> ! {
     let mut gpioa = dp.GPIOA.split(&mut rcc);
     let usart_tx = gpioa.pa2.into_alternate_push_pull(&mut gpioa.crl);
     let usart_rx = gpioa.pa3;
-    let mut _serial = dp.USART2.serial(
+    let serial = dp.USART2.serial(
         (usart_tx, usart_rx),
         serial::Config::default().baudrate(115200.bps()),
         &mut rcc,
     );
+    interrupt::free(|cs| {
+        *SERIAL.borrow(cs).borrow_mut() = Some(serial);
+    });
 
     let mut machine = Machine::default();
     machine.run();

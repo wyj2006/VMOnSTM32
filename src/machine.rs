@@ -4,6 +4,7 @@ use yaxpeax_arm::armv7::{ConditionCode, InstDecoder, Operand, RegShiftStyle};
 use crate::arithmetic::*;
 use crate::cpu::{CPU, InstrSet, PC_INDEX};
 use crate::memory::Memory;
+use crate::vmerror::VMError;
 
 pub struct Machine {
     pub cpu: CPU,
@@ -31,7 +32,7 @@ impl Reader<u32, u8> for Machine {
             return Err(ReadError::ExhaustedInput);
         }
         self.cpu.regs[PC_INDEX] += 1;
-        Ok(self.read_memory(address))
+        Ok(self.read_memory(address)?)
     }
 
     fn next_n(&mut self, buf: &mut [u8]) -> Result<(), ReadError> {
@@ -142,8 +143,8 @@ impl Machine {
         (address + alignment - 1) & !(alignment - 1)
     }
 
-    pub fn read_address(&self, operand: Operand) -> u32 {
-        match operand {
+    pub fn read_address(&self, operand: Operand) -> Result<u32, VMError> {
+        Ok(match operand {
             Operand::RegDeref(reg) => self.cpu.regs[reg.number() as usize],
             Operand::RegDerefPostindexOffset(reg, ..) => self.cpu.regs[reg.number() as usize],
             Operand::RegDerefPostindexReg(reg, ..) => self.cpu.regs[reg.number() as usize],
@@ -160,15 +161,15 @@ impl Machine {
             }
             Operand::RegDerefPreindexRegShift(reg, reg_shift, add, ..) => {
                 let a = self.cpu.regs[reg.number() as usize];
-                let b = self.read(Operand::RegShift(reg_shift));
+                let b = self.read(Operand::RegShift(reg_shift))?;
                 if add { a + b } else { a - b }
             }
             _ => unreachable!(),
-        }
+        })
     }
 
-    pub fn read(&self, operand: Operand) -> u32 {
-        match operand {
+    pub fn read(&self, operand: Operand) -> Result<u32, VMError> {
+        Ok(match operand {
             Operand::Imm32(value) => value,
             Operand::Imm12(value) => value as u32,
             Operand::Reg(reg) => self.cpu.regs[reg.number() as usize],
@@ -207,16 +208,16 @@ impl Machine {
             | Operand::RegDerefPreindexOffset(..)
             | Operand::RegDerefPreindexReg(..)
             | Operand::RegDerefPreindexRegShift(..) => {
-                self.read_memory_word(self.read_address(operand))
+                self.read_memory_word(self.read_address(operand)?)?
             }
             Operand::APSR => self.cpu.apsr().0,
             Operand::CPSR => self.cpu.cpsr.0,
             Operand::SPSR => unimplemented!(), //TODO Operand::SPSR
             _ => unimplemented!(),
-        }
+        })
     }
 
-    pub fn write(&mut self, operand: Operand, value: u32) {
+    pub fn write(&mut self, operand: Operand, value: u32) -> Result<(), VMError> {
         match operand {
             Operand::Reg(reg) => self.cpu.regs[reg.number() as usize] = value,
             Operand::RegWBack(reg, true) => self.cpu.regs[reg.number() as usize] = value,
@@ -224,37 +225,40 @@ impl Machine {
                 let reg = Operand::Reg(reg);
                 let b = offset as u32;
                 if add {
-                    self.write(reg, value + b);
+                    self.write(reg, value + b)?;
                 } else {
-                    self.write(reg, value - b);
+                    self.write(reg, value - b)?;
                 }
             }
             Operand::RegDerefPostindexReg(reg, reg2, add, true) => {
                 let reg = Operand::Reg(reg);
                 let b = self.cpu.regs[reg2.number() as usize];
                 if add {
-                    self.write(reg, value + b);
+                    self.write(reg, value + b)?;
                 } else {
-                    self.write(reg, value - b);
+                    self.write(reg, value - b)?;
                 }
             }
             Operand::RegDerefPostindexRegShift(reg, reg_shift, add, true) => {
                 let reg = Operand::Reg(reg);
-                let b = self.read(Operand::RegShift(reg_shift));
+                let b = self.read(Operand::RegShift(reg_shift))?;
                 if add {
-                    self.write(reg, value + b);
+                    self.write(reg, value + b)?;
                 } else {
-                    self.write(reg, value - b);
+                    self.write(reg, value - b)?;
                 }
             }
-            Operand::RegDerefPreindexOffset(reg, .., true) => self.write(Operand::Reg(reg), value),
-            Operand::RegDerefPreindexReg(reg, .., true) => self.write(Operand::Reg(reg), value),
+            Operand::RegDerefPreindexOffset(reg, .., true) => {
+                self.write(Operand::Reg(reg), value)?
+            }
+            Operand::RegDerefPreindexReg(reg, .., true) => self.write(Operand::Reg(reg), value)?,
             Operand::RegDerefPreindexRegShift(reg, .., true) => {
-                self.write(Operand::Reg(reg), value)
+                self.write(Operand::Reg(reg), value)?
             }
             Operand::StatusRegMask(..) => {} //TODO StatusRegMask
             _ => {}
         }
+        Ok(())
     }
 
     pub fn run(&mut self) -> ! {
@@ -269,7 +273,7 @@ impl Machine {
                 Ok(t) => t,
                 Err(_) => todo!(), //TODO 处理非法的指令
             };
-            self.execute(instruction);
+            self.execute(instruction).unwrap();
         }
     }
 }
