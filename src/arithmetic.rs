@@ -1,3 +1,4 @@
+use core::i32;
 use yaxpeax_arm::armv7::ShiftStyle;
 
 //P41
@@ -110,4 +111,60 @@ pub fn bit_count(x: u32) -> u32 {
         count += x >> i & 1;
     }
     count
+}
+
+//P44
+pub fn signed_sat_q(i: i64, n: u8) -> (u32, bool) {
+    let max = (1 << (n - 1) - 1) as i64;
+    let min = -(1 << (n - 1)) as i64;
+    let (result, saturated) = if i > max {
+        (max, true)
+    } else if i < min {
+        (min, true)
+    } else {
+        (i, true)
+    };
+    (result as u32, saturated)
+}
+
+//P44
+pub fn unsigned_sat_q(i: i64, n: u8) -> (u32, bool) {
+    let max = (1 << n) - 1 as i64;
+    let min = 0 as i64;
+    let (result, saturated) = if i > max {
+        (max, true)
+    } else if i < min {
+        (min, true)
+    } else {
+        (i, true)
+    };
+    (result as u32, saturated)
+}
+
+//P44
+pub fn signed_sat(i: i64, n: u8) -> u32 {
+    signed_sat_q(i, n).0
+}
+
+//P44
+pub fn unsigned_sat(i: i64, n: u8) -> u32 {
+    unsigned_sat_q(i, n).0
+}
+
+//P44
+pub fn sat_q(i: i64, n: u8, unsigned: bool) -> (u32, bool) {
+    if unsigned {
+        unsigned_sat_q(i, n)
+    } else {
+        signed_sat_q(i, n)
+    }
+}
+
+//P44
+pub fn sat(i: i64, n: u8, unsigned: bool) -> u32 {
+    if unsigned {
+        unsigned_sat(i, n)
+    } else {
+        signed_sat(i, n)
+    }
 }

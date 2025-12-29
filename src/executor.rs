@@ -398,16 +398,168 @@ impl Machine {
                 }
                 self.cpu.regs[SP_INDEX] = address;
             }
-            Opcode::QADD => unimplemented!(), //TODO QADD
-            Opcode::QADD16 | Opcode::UQADD16 => unimplemented!(), //TODO QADD16 UQADD16
-            Opcode::QADD8 | Opcode::UQADD8 => unimplemented!(), //TODO QADD8 UQADD8
-            Opcode::QASX | Opcode::UQASX => unimplemented!(), //TODO QASX UQASX
-            Opcode::QDADD => unimplemented!(), //TODO QDADD
-            Opcode::QDSUB => unimplemented!(), //TODO QDSUB
-            Opcode::QSAX | Opcode::UQSAX => unimplemented!(), //TODO QSAX UQSAX
-            Opcode::QSUB => unimplemented!(), //TODO QSUB
-            Opcode::QSUB16 | Opcode::UQSUB16 => unimplemented!(), //TODO QSUB16 UQSUB16
-            Opcode::QSUB8 | Opcode::UQSUB8 => unimplemented!(), //TODO QSUB8 UQSUB8
+            Opcode::QADD => {
+                let d = inst.operands[0];
+                let m = self.read(inst.operands[1])? as i32 as i64;
+                let n = self.read(inst.operands[2])? as i32 as i64;
+                let (result, sat) = signed_sat_q(n + m, 32);
+                self.write(d, result)?;
+                if sat {
+                    self.cpu.apsr_mut().set_q(true);
+                }
+            }
+            Opcode::QADD16 | Opcode::UQADD16 => {
+                let d = inst.operands[0];
+                let m = self.read(inst.operands[1])?;
+                let n = self.read(inst.operands[2])?;
+                let (sum1, sum2) = match inst.opcode {
+                    Opcode::QADD16 => (
+                        signed_sat(
+                            (n & 0xffff) as u16 as i16 as i64 + (m & 0xffff) as u16 as i16 as i64,
+                            16,
+                        ),
+                        signed_sat(
+                            (n >> 16) as u16 as i16 as i64 + (m >> 16) as u16 as i16 as i64,
+                            16,
+                        ),
+                    ),
+                    Opcode::UQADD16 => (
+                        unsigned_sat((n & 0xffff) as i64 + (m & 0xffff) as i64, 16),
+                        unsigned_sat((n >> 16) as i64 + (m >> 16) as i64, 16),
+                    ),
+                    _ => unreachable!(),
+                };
+                self.write(d, sum2 << 16 | (sum1 & 0xffff))?;
+            }
+            Opcode::QADD8 | Opcode::UQADD8 => {
+                let d = inst.operands[0];
+                let n = self.read(inst.operands[1])?.to_le_bytes();
+                let m = self.read(inst.operands[2])?.to_le_bytes();
+                let mut sum = [0; 4];
+                for i in 0..4 {
+                    sum[i] = match inst.opcode {
+                        Opcode::QADD8 => signed_sat(n[i] as i8 as i64 + m[i] as i8 as i64, 8) as u8,
+                        Opcode::UQADD8 => unsigned_sat(n[i] as i64 + m[i] as i64, 8) as u8,
+                        _ => unreachable!(),
+                    };
+                }
+                self.write(d, u32::from_le_bytes(sum))?;
+            }
+            Opcode::QASX | Opcode::UQASX => {
+                let d = inst.operands[0];
+                let m = self.read(inst.operands[1])?;
+                let n = self.read(inst.operands[2])?;
+                let (diff, sum) = match inst.opcode {
+                    Opcode::QASX => (
+                        signed_sat(
+                            (n & 0xffff) as u16 as i16 as i64 - (m & 0xffff) as u16 as i16 as i64,
+                            16,
+                        ),
+                        signed_sat(
+                            (n >> 16) as u16 as i16 as i64 + (m >> 16) as u16 as i16 as i64,
+                            16,
+                        ),
+                    ),
+                    Opcode::UQASX => (
+                        unsigned_sat((n & 0xffff) as i64 - (m & 0xffff) as i64, 16),
+                        unsigned_sat((n >> 16) as i64 + (m >> 16) as i64, 16),
+                    ),
+                    _ => unreachable!(),
+                };
+                self.write(d, sum << 16 | (diff & 0xffff))?;
+            }
+            Opcode::QDADD => {
+                let d = inst.operands[0];
+                let m = self.read(inst.operands[1])? as i32 as i64;
+                let n = self.read(inst.operands[2])? as i32 as i64;
+                let (doubled, sat1) = signed_sat_q(2 * n, 32);
+                let (result, sat2) = signed_sat_q(m + doubled as i32 as i64, 32);
+                self.write(d, result)?;
+                if sat1 || sat2 {
+                    self.cpu.apsr_mut().set_q(true);
+                }
+            }
+            Opcode::QDSUB => {
+                let d = inst.operands[0];
+                let m = self.read(inst.operands[1])? as i32 as i64;
+                let n = self.read(inst.operands[2])? as i32 as i64;
+                let (doubled, sat1) = signed_sat_q(2 * n, 32);
+                let (result, sat2) = signed_sat_q(m - doubled as i32 as i64, 32);
+                self.write(d, result)?;
+                if sat1 || sat2 {
+                    self.cpu.apsr_mut().set_q(true);
+                }
+            }
+            Opcode::QSAX | Opcode::UQSAX => {
+                let d = inst.operands[0];
+                let m = self.read(inst.operands[1])?;
+                let n = self.read(inst.operands[2])?;
+                let (sum, diff) = match inst.opcode {
+                    Opcode::QASX => (
+                        signed_sat(
+                            (n & 0xffff) as u16 as i16 as i64 + (m >> 16) as u16 as i16 as i64,
+                            16,
+                        ),
+                        signed_sat(
+                            (n >> 16) as u16 as i16 as i64 - (m & 0xffff) as u16 as i16 as i64,
+                            16,
+                        ),
+                    ),
+                    Opcode::UQASX => (
+                        unsigned_sat((n & 0xffff) as i64 + (m >> 16) as i64, 16),
+                        unsigned_sat((n >> 16) as i64 - (m & 0xffff) as i64, 16),
+                    ),
+                    _ => unreachable!(),
+                };
+                self.write(d, diff << 16 | (sum & 0xffff))?;
+            }
+            Opcode::QSUB => {
+                let d = inst.operands[0];
+                let m = self.read(inst.operands[1])? as i32 as i64;
+                let n = self.read(inst.operands[2])? as i32 as i64;
+                let (result, sat) = signed_sat_q(m - n, 32);
+                self.write(d, result)?;
+                if sat {
+                    self.cpu.apsr_mut().set_q(true);
+                }
+            }
+            Opcode::QSUB16 | Opcode::UQSUB16 => {
+                let d = inst.operands[0];
+                let n = self.read(inst.operands[1])?;
+                let m = self.read(inst.operands[2])?;
+                let (diff1, diff2) = match inst.opcode {
+                    Opcode::QSUB16 => (
+                        signed_sat(
+                            (n & 0xffff) as u16 as i16 as i64 - (m & 0xffff) as u16 as i16 as i64,
+                            16,
+                        ),
+                        signed_sat(
+                            (n >> 16) as u16 as i16 as i64 - (m >> 16) as u16 as i16 as i64,
+                            16,
+                        ),
+                    ),
+                    Opcode::UQSUB16 => (
+                        unsigned_sat((n & 0xffff) as i64 - (m & 0xffff) as i64, 16),
+                        unsigned_sat((n >> 16) as i64 - (m >> 16) as i64, 16),
+                    ),
+                    _ => unreachable!(),
+                };
+                self.write(d, diff2 << 16 | (diff1 & 0xffff))?;
+            }
+            Opcode::QSUB8 | Opcode::UQSUB8 => {
+                let d = inst.operands[0];
+                let m = self.read(inst.operands[1])?.to_le_bytes();
+                let n = self.read(inst.operands[2])?.to_le_bytes();
+                let mut diff = [0; 4];
+                for i in 0..4 {
+                    diff[i] = match inst.opcode {
+                        Opcode::QSUB8 => signed_sat(n[i] as i8 as i64 - m[i] as i8 as i64, 8) as u8,
+                        Opcode::UQSUB8 => unsigned_sat(n[i] as i64 - m[i] as i64, 8) as u8,
+                        _ => unreachable!(),
+                    };
+                }
+                self.write(d, u32::from_le_bytes(diff))?;
+            }
             Opcode::RBIT => {
                 let d = inst.operands[0];
                 let m = self.read(inst.operands[1])?;
@@ -517,7 +669,23 @@ impl Machine {
                     n.view_bits::<Lsb0>().get(lsb..msb).unwrap().load::<i32>() as u32,
                 )?;
             }
-            Opcode::SDIV | Opcode::UDIV => unimplemented!(), //TODO SDIV UDIV
+            Opcode::SDIV | Opcode::UDIV => {
+                let result;
+                let d = inst.operands[0];
+                let n = self.read(inst.operands[1])?;
+                let m = self.read(inst.operands[2])?;
+                if m == 0 {
+                    //TODO IntegerZeroDivideTrappingEnabled
+                    result = 0;
+                } else {
+                    result = match inst.opcode {
+                        Opcode::SDIV => (n as i32 / m as i32) as u32,
+                        Opcode::UDIV => n / m,
+                        _ => unreachable!(),
+                    }
+                }
+                self.write(d, result)?;
+            }
             Opcode::SEL => {
                 let d = inst.operands[0];
                 let n = self.read(inst.operands[1])?.to_le_bytes();
@@ -598,7 +766,7 @@ impl Machine {
                 let operand2 = if m_high { m >> 16 } else { m & 0xffff } as i64;
                 let result = operand1 * operand2 + a;
                 self.write(d, result as u32)?;
-                if result >> 32 != 0 {
+                if result as u64 >> 32 != 0 {
                     self.cpu.apsr_mut().set_q(true);
                 }
             }
