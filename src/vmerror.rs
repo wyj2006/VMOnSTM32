@@ -1,16 +1,17 @@
+use core::fmt;
 use nb;
-use stm32f1xx_hal::serial;
 use yaxpeax_arch::ReadError;
 
 #[derive(Debug)]
 pub enum VMError {
     BusError,
-    SerialError(nb::Error<serial::Error>),
+    FmtError(fmt::Error),
+    NonBlockError,
 }
 
-impl From<nb::Error<serial::Error>> for VMError {
-    fn from(value: nb::Error<serial::Error>) -> Self {
-        VMError::SerialError(value)
+impl From<fmt::Error> for VMError {
+    fn from(value: fmt::Error) -> Self {
+        VMError::FmtError(value)
     }
 }
 
@@ -20,11 +21,18 @@ impl From<VMError> for ReadError {
     }
 }
 
+impl<E> From<nb::Error<E>> for VMError {
+    fn from(_value: nb::Error<E>) -> Self {
+        VMError::NonBlockError
+    }
+}
+
 impl VMError {
     pub fn to_str(&self) -> &'static str {
         match self {
             VMError::BusError => "Bus Error",
-            VMError::SerialError(_) => "Serial Error",
+            VMError::FmtError(_) => "Serial Error",
+            VMError::NonBlockError => "Non Blocking Error",
         }
     }
 }

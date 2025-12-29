@@ -19,7 +19,7 @@ impl Machine {
                 let n = self.read(inst.operands[0])?;
                 let m = self.read(inst.operands[1])?; //i32
                 if nonzero != (n == 0) {
-                    self.branch_write_pc(self.cpu.regs[PC_INDEX].wrapping_add(m));
+                    self.branch_write_pc(self.cpu.regs[PC_INDEX] + m);
                 }
                 return Ok(());
             }
@@ -147,7 +147,7 @@ impl Machine {
             }
             Opcode::B => {
                 let imm32 = self.read(inst.operands[0])?; //i32
-                self.branch_write_pc(self.cpu.regs[PC_INDEX].wrapping_add(imm32));
+                self.branch_write_pc(self.cpu.regs[PC_INDEX] + imm32);
             }
             Opcode::BFC => {
                 //将Rd的lsbit..msbit部分清0
@@ -189,9 +189,9 @@ impl Machine {
                     let target_instr_set = InstrSet::Arm; //TODO 确定target_instr_set
                     let target_address;
                     if let InstrSet::Arm = target_instr_set {
-                        target_address = self.align(self.cpu.regs[PC_INDEX], 4).wrapping_add(imm32);
+                        target_address = self.align(self.cpu.regs[PC_INDEX], 4) + imm32;
                     } else {
-                        target_address = self.cpu.regs[PC_INDEX].wrapping_add(imm32);
+                        target_address = self.cpu.regs[PC_INDEX] + imm32;
                     }
                     self.select_instr_set(target_instr_set);
                     self.branch_write_pc(target_address);

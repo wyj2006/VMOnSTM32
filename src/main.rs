@@ -7,6 +7,7 @@ pub mod executor;
 pub mod machine;
 pub mod memory;
 pub mod protocol;
+pub mod serial;
 pub mod vmerror;
 
 use core::cell::RefCell;
@@ -15,19 +16,17 @@ use cortex_m::interrupt;
 use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
 use linked_list_allocator::LockedHeap;
-use stm32f1xx_hal::pac;
-use stm32f1xx_hal::prelude::*;
-use stm32f1xx_hal::rcc;
-use stm32f1xx_hal::serial;
-use stm32f1xx_hal::serial::Serial;
+use stm32h7::stm32h723::*;
 
 use crate::machine::Machine;
-
-pub type SerialType = Serial<pac::USART2>;
+use crate::serial::ProtocolSerial;
 
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
-pub static SERIAL: Mutex<RefCell<Option<SerialType>>> = Mutex::new(RefCell::new(None));
+pub static SERIAL: Mutex<RefCell<Option<ProtocolSerial>>> = Mutex::new(RefCell::new(None));
+
+const USART_BAUD: u32 = 115200;
+const USART_FREQ: u32 = 68_750_000;
 
 #[entry]
 fn main() -> ! {
@@ -37,21 +36,109 @@ fn main() -> ! {
         ALLOCATOR.lock().init(heap.as_mut_ptr(), HEAP_SIZE);
     }
 
-    let dp = pac::Peripherals::take().unwrap();
-    let mut flash = dp.FLASH.constrain();
-    let mut rcc = dp.RCC.freeze(rcc::Config::hse(8.MHz()), &mut flash.acr);
+    let p = Peripherals::take().unwrap();
 
-    let mut gpioa = dp.GPIOA.split(&mut rcc);
-    let usart_tx = gpioa.pa2.into_alternate_push_pull(&mut gpioa.crl);
-    let usart_rx = gpioa.pa3;
-    let serial = dp.USART2.serial(
-        (usart_tx, usart_rx),
-        serial::Config::default().baudrate(115200.bps()),
-        &mut rcc,
-    );
-    interrupt::free(|cs| {
-        *SERIAL.borrow(cs).borrow_mut() = Some(serial);
+    let flash = p.FLASH;
+    flash.acr().modify(|_, w| unsafe { w.latency().bits(2) });
+
+    let rcc = p.RCC;
+
+    //启用HSE
+    rcc.cr().modify(|_, w| w.hseon().on());
+    while rcc.cr().read().hserdy().is_not_ready() {}
+
+    //配置 PLL1
+    // DIVM1
+    rcc.pllckselr()
+        .modify(|_, w| unsafe { w.divm1().bits(2).pllsrc().hse() });
+
+    rcc.pllcfgr().modify(|_, w| {
+        w.divp1en()
+            .enabled() // Enable PLL1_P
+            .divq1en()
+            .disabled() // Disable Q
+            .divr1en()
+            .disabled() // Disable R
+            .pll1vcosel()
+            .wide_vco() // Wide VCO range
+            .pll1rge()
+            .range8()
     });
+
+    // DIVMN=44 DIVMP=2
+    rcc.pll1divr()
+        .modify(|_, w| unsafe { w.divn1().bits(44 - 1).divp1().bits(2 - 1) });
+
+    // 启用 PLL1 并等待锁定
+    rcc.cr().modify(|_, w| w.pll1on().set_bit());
+    while rcc.cr().read().pll1rdy().is_not_ready() {}
+
+    //配置总线分频（AHB, APB）
+    rcc.d1cfgr().modify(|_, w| {
+        w.d1cpre()
+            .div1() // CPU SYSCLK
+            .hpre()
+            .div2() // AXI HCLK3
+            .d1ppre()
+            .div2() //APB3
+    });
+
+    rcc.d2cfgr().modify(|_, w| {
+        w.d2ppre1()
+            .div2() // APB1
+            .d2ppre2()
+            .div2() // APB2 
+    });
+
+    rcc.d3cfgr().modify(|_, w| {
+        w.d3ppre().div2() // APB4
+    });
+
+    // 配置 USART2 的时钟源
+    rcc.d2ccip2r().modify(|_, w| w.usart234578sel().rcc_pclk1());
+
+    // 切换系统时钟源到 PLL1_P
+    rcc.cfgr().modify(|_, w| w.sw().pll1());
+    while !rcc.cfgr().read().sws().is_pll1() {} // Wait until switched
+
+    //启用GPIOA和USART2
+    rcc.ahb4enr().modify(|_, w| w.gpioaen().enabled());
+    rcc.apb1lenr().modify(|_, w| w.usart2en().enabled());
+
+    let gpio = p.GPIOA;
+
+    // PA2: USART2_TX → Alternate Function 7
+    // PA3: USART2_RX → Alternate Function 7
+    gpio.moder()
+        .modify(|_, w| w.moder2().alternate().moder3().alternate());
+    gpio.otyper()
+        .modify(|_, w| w.ot2().push_pull().ot3().push_pull()); // Push-pull
+    gpio.ospeedr()
+        .modify(|_, w| w.ospeedr2().low_speed().ospeedr3().low_speed());
+    gpio.pupdr()
+        .modify(|_, w| w.pupdr2().floating().pupdr3().floating()); // No pull
+    gpio.afrl().modify(|_, w| w.afr2().af7().afr3().af7()); // AF7 for USART2
+
+    let usart = p.USART2;
+    // 计算 BRR
+    let brr = ((USART_FREQ as u64) << 4) / (16 * USART_BAUD as u64);
+    // 设置字长 8-bit, 无奇偶校验
+    usart.cr1().modify(|_, w| w.m0().bit8().pce().disabled());
+    // 设置 1 停止位
+    usart.cr2().modify(|_, w| w.stop().stop1());
+    // 设置波特率
+    usart.brr().write(|w| unsafe { w.brr().bits(brr as u16) });
+    // 使能发送器、接收器、USART
+    usart.cr1().modify(|_, w| {
+        w.te()
+            .enabled() // Transmitter enable
+            .re()
+            .enabled() // Receiver enable
+            .ue()
+            .enabled() // USART enable
+    });
+
+    interrupt::free(|cs| *SERIAL.borrow(cs).borrow_mut() = Some(ProtocolSerial {}));
 
     let mut machine = Machine::default();
     machine.run();

@@ -38,7 +38,7 @@ impl Machine {
         } else {
             interrupt::free(|cs| -> Result<u8, VMError> {
                 if let Some(serial) = SERIAL.borrow(cs).borrow_mut().as_mut() {
-                    Command::ReadMemory(address as u32).send(serial)?;
+                    Command::ReadMemory((address - INTERNAL_SIZE) as u32).send(serial)?;
                     Ok(receive_data(serial)?[0])
                 } else {
                     unreachable!()
