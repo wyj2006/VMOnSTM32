@@ -102,22 +102,34 @@ fn main() -> ! {
     while !rcc.cfgr().read().sws().is_pll1() {} // Wait until switched
 
     //启用GPIOA和USART2
-    rcc.ahb4enr().modify(|_, w| w.gpioaen().enabled());
+    rcc.ahb4enr()
+        .modify(|_, w| w.gpioaen().enabled().gpiogen().enabled());
     rcc.apb1lenr().modify(|_, w| w.usart2en().enabled());
 
-    let gpio = p.GPIOA;
+    let gpiog = p.GPIOG;
+    gpiog.moder().modify(|_, w| w.moder7().output());
+    gpiog.otyper().modify(|_, w| w.ot7().push_pull());
+    gpiog.ospeedr().modify(|_, w| w.ospeedr7().low_speed());
+    gpiog.pupdr().modify(|_, w| w.pupdr7().floating());
+    gpiog.odr().write(|w| w.odr7().set_bit());
+
+    let gpioa = p.GPIOA;
 
     // PA2: USART2_TX → Alternate Function 7
     // PA3: USART2_RX → Alternate Function 7
-    gpio.moder()
+    gpioa
+        .moder()
         .modify(|_, w| w.moder2().alternate().moder3().alternate());
-    gpio.otyper()
+    gpioa
+        .otyper()
         .modify(|_, w| w.ot2().push_pull().ot3().push_pull()); // Push-pull
-    gpio.ospeedr()
+    gpioa
+        .ospeedr()
         .modify(|_, w| w.ospeedr2().low_speed().ospeedr3().low_speed());
-    gpio.pupdr()
+    gpioa
+        .pupdr()
         .modify(|_, w| w.pupdr2().floating().pupdr3().floating()); // No pull
-    gpio.afrl().modify(|_, w| w.afr2().af7().afr3().af7()); // AF7 for USART2
+    gpioa.afrl().modify(|_, w| w.afr2().af7().afr3().af7()); // AF7 for USART2
 
     let usart = p.USART2;
     // 计算 BRR
@@ -147,5 +159,7 @@ fn main() -> ! {
 #[inline(never)]
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
+    let gpiog = unsafe { GPIOG::ptr().as_ref() }.unwrap();
+    gpiog.odr().write(|w| w.odr7().clear_bit());
     loop {}
 }
