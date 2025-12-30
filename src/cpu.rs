@@ -52,6 +52,7 @@ bitfield! {
 
 pub struct ISetRegisterMut<'a>(&'a mut CPSRegister);
 
+#[derive(PartialEq)]
 pub enum InstrSet {
     Arm,
     Thumb,
@@ -66,6 +67,7 @@ Current Program Status Register
 Condition flags|                                                    | Mask Bits |
 */
 bitfield! {
+    #[derive(Copy,Clone)]
     pub struct CPSRegister(u32);
     pub n, set_n: 31;
     pub z, set_z: 30;
@@ -87,6 +89,7 @@ bitfield! {
 pub struct CPU {
     pub regs: [u32; 16],
     pub cpsr: CPSRegister,
+    pub spsrs: [CPSRegister; 16],
 }
 
 impl Default for CPU {
@@ -94,6 +97,7 @@ impl Default for CPU {
         CPU {
             regs: [0; 16],
             cpsr: CPSRegister::default(),
+            spsrs: [CPSRegister::default(); 16],
         }
     }
 }
@@ -121,6 +125,14 @@ impl CPU {
 
     pub fn iset_state_mut(&mut self) -> ISetRegisterMut<'_> {
         ISetRegisterMut(&mut self.cpsr)
+    }
+
+    pub fn spsr(&self) -> &CPSRegister {
+        &self.spsrs[(self.cpsr.m() & 0xf) as usize]
+    }
+
+    pub fn spsr_mut(&mut self) -> &mut CPSRegister {
+        &mut self.spsrs[(self.cpsr.m() & 0xf) as usize]
     }
 }
 

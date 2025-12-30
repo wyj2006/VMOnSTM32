@@ -1,3 +1,6 @@
+use bitvec::field::BitField;
+use bitvec::order::Lsb0;
+use bitvec::view::BitView;
 use yaxpeax_arch::{Decoder, ReadError, Reader};
 use yaxpeax_arm::armv7::{ConditionCode, InstDecoder, Operand, RegShiftStyle};
 
@@ -168,6 +171,35 @@ impl Machine {
         })
     }
 
+    pub fn read_with_carry(&self, operand: Operand) -> Result<(u32, bool), VMError> {
+        Ok(match operand {
+            Operand::RegShift(reg_shift) => {
+                let reg;
+                let shift_style;
+                let amount;
+                match reg_shift.into_shift() {
+                    RegShiftStyle::RegImm(reg_imm_shift) => {
+                        shift_style = reg_imm_shift.stype();
+                        amount = reg_imm_shift.imm() as u32;
+                        reg = reg_imm_shift.shiftee();
+                    }
+                    RegShiftStyle::RegReg(reg_reg_shift) => {
+                        shift_style = reg_reg_shift.stype();
+                        reg = reg_reg_shift.shiftee();
+                        amount = self.cpu.regs[reg_reg_shift.shifter().number() as usize];
+                    }
+                }
+                shift_c(
+                    self.cpu.regs[reg.number() as usize],
+                    shift_style,
+                    amount,
+                    self.cpu.apsr().c(),
+                )
+            }
+            _ => (self.read(operand)?, false),
+        })
+    }
+
     pub fn read(&self, operand: Operand) -> Result<u32, VMError> {
         Ok(match operand {
             Operand::Imm32(value) => value,
@@ -212,7 +244,7 @@ impl Machine {
             }
             Operand::APSR => self.cpu.apsr().0,
             Operand::CPSR => self.cpu.cpsr.0,
-            Operand::SPSR => unimplemented!(), //TODO Operand::SPSR
+            Operand::SPSR => self.cpu.spsr().0,
             _ => unimplemented!(),
         })
     }
@@ -255,7 +287,83 @@ impl Machine {
             Operand::RegDerefPreindexRegShift(reg, .., true) => {
                 self.write(Operand::Reg(reg), value)?
             }
-            Operand::StatusRegMask(..) => {} //TODO StatusRegMask
+            Operand::StatusRegMask(status_reg_mask) => {
+                let status_reg_mask = status_reg_mask as u32;
+                let write_spsr = status_reg_mask >> 4 == 1;
+                let mask = status_reg_mask & 0xf;
+                if write_spsr {
+                    //P1153
+                    let spsr = self.cpu.spsr_mut().0.view_bits_mut::<Lsb0>();
+                    let value = value.view_bits::<Lsb0>();
+
+                    if mask >> 3 & 1 == 1 {
+                        spsr.clone_from_bitslice(value.get(24..32).unwrap()); // // N,Z,C,V,Q flags, IT<1:0>,J execution state bits
+                    }
+
+                    if mask >> 2 & 1 == 1 {
+                        spsr.clone_from_bitslice(value.get(16..20).unwrap()); // GE<3:0> flags
+                    }
+
+                    if mask >> 1 & 1 == 1 {
+                        spsr.clone_from_bitslice(value.get(8..16).unwrap()); // IT<7:2> execution state bits, E bit, A interrupt mask
+                    }
+
+                    if mask & 1 == 1 {
+                        spsr.clone_from_bitslice(value.get(5..8).unwrap()); // I,F interrupt masks, T execution state bit
+                        spsr.clone_from_bitslice(value.get(0..5).unwrap());
+                    }
+
+                    self.cpu.spsr_mut().0 = spsr.load();
+                } else {
+                    //TODO P1153
+                    let cpsr = self.cpu.cpsr.0.view_bits_mut::<Lsb0>();
+                    let value = value.view_bits::<Lsb0>();
+                    let is_excpt_return = false;
+                    let privileged = false;
+                    let nmfi = false;
+
+                    if mask >> 3 & 1 == 1 {
+                        cpsr.clone_from_bitslice(value.get(27..32).unwrap()); // N,Z,C,V,Q flags
+                        if is_excpt_return {
+                            cpsr.clone_from_bitslice(value.get(24..27).unwrap()); // IT<1:0>,J execution state bits
+                        }
+                    }
+
+                    if mask >> 2 & 1 == 1 {
+                        cpsr.clone_from_bitslice(value.get(16..20).unwrap()); // GE<3:0> flags
+                    }
+
+                    if mask >> 1 & 1 == 1 {
+                        if is_excpt_return {
+                            cpsr.clone_from_bitslice(value.get(10..16).unwrap()); // IT<7:2> execution state bits
+                        }
+                        cpsr.set(9, value[9]); // E bit is user-writable
+                        //TODO (IsSecure() Il SCR.AW == '1' Il HaveVirtExt())
+                        if privileged && false {
+                            cpsr.set(8, value[8]); // A interrupt mask
+                        }
+                    }
+
+                    if mask & 1 == 1 {
+                        if privileged {
+                            cpsr.set(7, value[7]); // I interrupt mask
+                        }
+                        //TODO IsSecure() Il SCR.FW == '1' Il HaveVirtExt())
+                        if privileged && (!nmfi || value[6] == false) && false {
+                            cpsr.set(6, value[6]); // F interrupt mask
+                        }
+                        if is_excpt_return {
+                            cpsr.set(5, value[5]); // T execution state bit
+                        }
+                        if privileged {
+                            // CPSR<4:0>, mode bits
+                            cpsr.clone_from_bitslice(value.get(0..5).unwrap());
+                        }
+                    }
+
+                    self.cpu.cpsr.0 = cpsr.load();
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -264,11 +372,9 @@ impl Machine {
     pub fn run(&mut self) -> ! {
         loop {
             let mut decoder = InstDecoder::armv7();
-            decoder.set_thumb_mode(if let InstrSet::Thumb = self.current_instr_set() {
-                true
-            } else {
-                false
-            });
+            decoder.set_thumb_mode(InstrSet::Thumb == self.current_instr_set());
+            decoder.set_apsr_c(self.cpu.apsr().c());
+            decoder.set_in_it_block(self.in_it_block());
             let instruction = match decoder.decode(self) {
                 Ok(t) => t,
                 Err(_) => todo!(), //TODO 处理非法的指令

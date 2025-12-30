@@ -30,7 +30,7 @@ const USART_FREQ: u32 = 68_750_000;
 
 #[entry]
 fn main() -> ! {
-    const HEAP_SIZE: usize = 1024;
+    const HEAP_SIZE: usize = 1024 * 10;
     let mut heap: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
     unsafe {
         ALLOCATOR.lock().init(heap.as_mut_ptr(), HEAP_SIZE);

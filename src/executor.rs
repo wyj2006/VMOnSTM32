@@ -62,20 +62,26 @@ impl Machine {
                     m = inst.operands[2];
                 }
                 let n = self.read(n)?;
-                let m = self.read(m)?;
+                let (m, mut carry) = self.read_with_carry(m)?;
+                if let Operand::Nothing = inst.operands[4] {
+                    //carry来自寄存器位移
+                } else {
+                    //carry来自立即数
+                    carry = self.read(inst.operands[4])? != 0;
+                }
 
                 let (result, carry, overflow) = match inst.opcode {
                     Opcode::ADC => add_with_carry(n, m, self.cpu.apsr().c()),
                     Opcode::ADD => add_with_carry(n, m, false),
-                    Opcode::AND => (n & m, false, self.cpu.apsr().v()), //TODO carry
+                    Opcode::AND => (n & m, carry, self.cpu.apsr().v()),
                     Opcode::ASR => {
                         //如果m来自立即数, 那它也只有5位
                         let (result, carry) =
                             shift_c(n, ShiftStyle::ASR, m & 0xff, self.cpu.apsr().c());
                         (result, carry, self.cpu.apsr().v())
                     }
-                    Opcode::BIC => (n & !m, false, self.cpu.apsr().v()), //TODO carry
-                    Opcode::EOR => (n ^ m, false, self.cpu.apsr().v()),  //TODO carry
+                    Opcode::BIC => (n & !m, carry, self.cpu.apsr().v()),
+                    Opcode::EOR => (n ^ m, carry, self.cpu.apsr().v()),
                     Opcode::LSL => {
                         //如果m来自立即数, 那它也只有5位
                         let (result, carry) =
@@ -89,12 +95,12 @@ impl Machine {
                         (result, carry, self.cpu.apsr().v())
                     }
                     //MOV只有两个操作数, 所以根据前面的逻辑 d==n, m才是操作数
-                    Opcode::MOV => (m, false, self.cpu.apsr().v()), //TODO carry
+                    Opcode::MOV => (m, carry, self.cpu.apsr().v()),
                     Opcode::MUL => (n * m, self.cpu.apsr().c(), self.cpu.apsr().v()),
                     //MVN只有两个操作数, 所以根据前面的逻辑 d==n, m才是操作数
-                    Opcode::MVN => (!m, false, self.cpu.apsr().v()), //TODO carry
-                    Opcode::ORN => (n | !m, false, self.cpu.apsr().v()), //TODO carry
-                    Opcode::ORR => (n | m, false, self.cpu.apsr().v()), //TODO carry
+                    Opcode::MVN => (!m, carry, self.cpu.apsr().v()),
+                    Opcode::ORN => (n | !m, carry, self.cpu.apsr().v()),
+                    Opcode::ORR => (n | m, carry, self.cpu.apsr().v()),
                     Opcode::ROR => {
                         //如果m来自立即数, 那它也只有5位
                         let (result, carry) =
@@ -122,7 +128,6 @@ impl Machine {
                 } else {
                     self.write(d, result)?;
                 }
-                //TODO InItBlock
                 if inst.s {
                     let mut apsr = self.cpu.apsr_mut();
                     apsr.set_n(result >> 31 & 1 == 1);
@@ -179,14 +184,18 @@ impl Machine {
             }
             Opcode::BKPT => unreachable!(),
             Opcode::BL | Opcode::BLX => match inst.operands[0] {
-                Operand::BranchThumbOffset(imm32) => {
+                Operand::BranchThumbOffset(imm32) | Operand::BranchOffset(imm32) => {
                     let imm32 = imm32 as u32; //i32
                     if let InstrSet::Arm = self.current_instr_set() {
                         self.cpu.regs[LR_INDEX] = self.cpu.regs[PC_INDEX] - 4;
                     } else {
                         self.cpu.regs[LR_INDEX] = self.cpu.regs[PC_INDEX] | 1;
                     }
-                    let target_instr_set = InstrSet::Arm; //TODO 确定target_instr_set
+                    let target_instr_set = match self.read(inst.operands[4])? {
+                        0b00 => InstrSet::Arm,
+                        0b01 => InstrSet::Thumb,
+                        _ => self.current_instr_set(),
+                    };
                     let target_address;
                     if let InstrSet::Arm = target_instr_set {
                         target_address = self.align(self.cpu.regs[PC_INDEX], 4) + imm32;
@@ -296,7 +305,7 @@ impl Machine {
                     _ => {}
                 }
                 let Operand::Reg(reg) = t else { unreachable!() };
-                //TODO 对齐检查
+                //无需对齐检查
                 if reg.number() as usize == PC_INDEX {
                     self.load_write_pc(word);
                 } else {
@@ -371,7 +380,7 @@ impl Machine {
             Opcode::POP => {
                 let mut address = self.cpu.regs[SP_INDEX];
                 let registers = self.read(inst.operands[0])?;
-                //TODO 对齐
+                // 无需对齐
                 for i in 0..16 {
                     if registers >> i & 1 != 1 {
                         continue;
@@ -388,7 +397,7 @@ impl Machine {
             Opcode::PUSH => {
                 let mut address = self.cpu.regs[SP_INDEX];
                 let registers = self.read(inst.operands[0])?;
-                //TODO 对齐
+                // 无需对齐
                 for i in (0..16).rev() {
                     if registers >> i & 1 != 1 {
                         continue;
@@ -770,8 +779,7 @@ impl Machine {
                     self.cpu.apsr_mut().set_q(true);
                 }
             }
-            Opcode::SMLAD => {
-                let m_swap = false; //TODO m_swap
+            Opcode::SMLAD(m_swap) => {
                 let d = inst.operands[0];
                 let n = self.read(inst.operands[1])? as i64;
                 let m = self.read(inst.operands[2])?;
@@ -837,8 +845,7 @@ impl Machine {
                     self.cpu.apsr_mut().set_q(true);
                 }
             }
-            Opcode::SMLSD => {
-                let m_swap = false; //TODO m_swap
+            Opcode::SMLSD(m_swap) => {
                 let d = inst.operands[0];
                 let n = self.read(inst.operands[1])? as i64;
                 let m = self.read(inst.operands[2])?;
@@ -865,8 +872,7 @@ impl Machine {
                 self.write(dlo, (result & 0xffffffff) as u32)?;
                 self.write(dhi, (result >> 32) as u32)?;
             }
-            Opcode::SMMLA => {
-                let round = false; //TODO round
+            Opcode::SMMLA(round) => {
                 let d = inst.operands[0];
                 let n = self.read(inst.operands[1])? as i64;
                 let m = self.read(inst.operands[2])? as i64;
@@ -877,8 +883,7 @@ impl Machine {
                 }
                 self.write(d, (result >> 32) as u32)?;
             }
-            Opcode::SMMLS => {
-                let round = false; //TODO round
+            Opcode::SMMLS(round) => {
                 let d = inst.operands[0];
                 let n = self.read(inst.operands[1])? as i64;
                 let m = self.read(inst.operands[2])? as i64;
@@ -889,8 +894,7 @@ impl Machine {
                 }
                 self.write(d, (result >> 32) as u32)?;
             }
-            Opcode::SMMUL => {
-                let round = false; //TODO round
+            Opcode::SMMUL(round) => {
                 let d = inst.operands[0];
                 let n = self.read(inst.operands[1])? as i64;
                 let m = self.read(inst.operands[2])? as i64;
@@ -900,8 +904,7 @@ impl Machine {
                 }
                 self.write(d, (result >> 32) as u32)?;
             }
-            Opcode::SMUAD => {
-                let m_swap = false; //TODO m_swap
+            Opcode::SMUAD(m_swap) => {
                 let d = inst.operands[0];
                 let n = self.read(inst.operands[1])? as i64;
                 let m = self.read(inst.operands[2])?;
@@ -949,8 +952,7 @@ impl Machine {
                 let result = n * operand2;
                 self.write(d, ((result >> 16) & 0xffffffff) as u32)?;
             }
-            Opcode::SMUSD => {
-                let m_swap = false; //TODO m_swap
+            Opcode::SMUSD(m_swap) => {
                 let d = inst.operands[0];
                 let n = self.read(inst.operands[1])? as i64;
                 let m = self.read(inst.operands[2])?;
@@ -1043,7 +1045,7 @@ impl Machine {
                 let t = inst.operands[0];
                 let address = self.read_address(inst.operands[1])?;
                 let word = self.read(t)?;
-                //TODO 对齐检查
+                //无需对齐检查
                 match inst.opcode {
                     Opcode::STR | Opcode::STRT => self.write_memory_word(address, word)?,
                     Opcode::STRB | Opcode::STRBT => {
@@ -1152,21 +1154,33 @@ impl Machine {
             }
             Opcode::TEQ => {
                 let n = self.read(inst.operands[0])?;
-                let m = self.read(inst.operands[1])?;
+                let (m, mut carry) = self.read_with_carry(inst.operands[1])?;
+                if let Operand::Nothing = inst.operands[4] {
+                    //carry来自寄存器位移
+                } else {
+                    //carry来自立即数
+                    carry = self.read(inst.operands[4])? != 0;
+                }
                 let result = n ^ m;
                 let mut apsr = self.cpu.apsr_mut();
                 apsr.set_n(result >> 31 & 1 == 1);
                 apsr.set_z(result != 0);
-                apsr.set_c(false); //TODO carry
+                apsr.set_c(carry);
             }
             Opcode::TST => {
                 let n = self.read(inst.operands[0])?;
-                let m = self.read(inst.operands[1])?;
+                let (m, mut carry) = self.read_with_carry(inst.operands[1])?;
+                if let Operand::Nothing = inst.operands[4] {
+                    //carry来自寄存器位移
+                } else {
+                    //carry来自立即数
+                    carry = self.read(inst.operands[4])? != 0;
+                }
                 let result = n & m;
                 let mut apsr = self.cpu.apsr_mut();
                 apsr.set_n(result >> 31 & 1 == 1);
                 apsr.set_z(result != 0);
-                apsr.set_c(false); //TODO carry
+                apsr.set_c(carry);
             }
             Opcode::UDF => unimplemented!(), //TODO UDF
             Opcode::UMAAL => {
