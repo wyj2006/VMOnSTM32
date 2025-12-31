@@ -131,7 +131,7 @@ impl Machine {
                 if inst.s {
                     let mut apsr = self.cpu.apsr_mut();
                     apsr.set_n(result >> 31 & 1 == 1);
-                    apsr.set_z(result != 0);
+                    apsr.set_z(result == 0);
                     apsr.set_c(carry);
                     apsr.set_v(overflow);
                 }
@@ -156,41 +156,41 @@ impl Machine {
             }
             Opcode::BFC => {
                 //将Rd的lsbit..msbit部分清0
-                //operands[1]是将msbit作为寄存器索引了
+                //operands[1]是将msbit作为寄存器索引了(或者是BFI的Rn部分)
                 let d = inst.operands[0];
                 let lsbit = self.read(inst.operands[2])?;
                 let msbit = self.read(inst.operands[3])?;
                 if msbit >= lsbit {
-                    let bits = self.read(d)?;
-                    let width = (msbit - lsbit + 1) as u32;
-                    let mask = ((1 << width) - 1) << lsbit;
-                    let bits = bits & !mask;
-                    self.write(d, bits)?;
+                    let mut bits = self.read(d)?;
+                    let bits = bits.view_bits_mut::<Lsb0>();
+                    for i in lsbit..=msbit {
+                        bits.set(i as usize, false);
+                    }
+                    self.write(d, bits.load())?;
                 }
             }
             Opcode::BFI => {
                 //将Rd的lsbit..msbit部分用Rn的0..(msbit-lsbit)替换
                 let d = inst.operands[0];
-                let n = inst.operands[1];
+                let n = self.read(inst.operands[1])?;
+                let n = n.view_bits::<Lsb0>();
                 let lsbit = self.read(inst.operands[2])?;
                 let msbit = self.read(inst.operands[3])?;
                 if msbit >= lsbit {
-                    let bits = self.read(d)?;
-                    let width = (msbit - lsbit + 1) as u32;
-                    let mask = ((1 << width) - 1) << lsbit;
-                    let bits = bits & (!mask | self.read(n)? << lsbit);
-                    self.write(d, bits)?;
+                    let mut bits = self.read(d)?;
+                    let bits = bits.view_bits_mut::<Lsb0>();
+                    for i in lsbit..=msbit {
+                        bits.set(i as usize, n[(i - lsbit) as usize]);
+                    }
+                    self.write(d, bits.load())?;
                 }
             }
             Opcode::BKPT => unreachable!(),
             Opcode::BL | Opcode::BLX => match inst.operands[0] {
-                Operand::BranchThumbOffset(imm32) | Operand::BranchOffset(imm32) => {
-                    let imm32 = imm32 as u32; //i32
-                    if let InstrSet::Arm = self.current_instr_set() {
-                        self.cpu.regs[LR_INDEX] = self.cpu.regs[PC_INDEX] - 4;
-                    } else {
-                        self.cpu.regs[LR_INDEX] = self.cpu.regs[PC_INDEX] | 1;
-                    }
+                Operand::BranchThumbOffset(..) | Operand::BranchOffset(..) => {
+                    let imm32 = self.read(inst.operands[0])?; //i32
+                    //没有流水线, 无需调整
+                    self.cpu.regs[LR_INDEX] = self.cpu.regs[PC_INDEX];
                     let target_instr_set = match self.read(inst.operands[4])? {
                         0b00 => InstrSet::Arm,
                         0b01 => InstrSet::Thumb,
@@ -207,11 +207,8 @@ impl Machine {
                 }
                 Operand::Reg(reg) => {
                     let target = self.cpu.regs[reg.number() as usize];
-                    if let InstrSet::Arm = self.current_instr_set() {
-                        self.cpu.regs[LR_INDEX] = self.cpu.regs[PC_INDEX] - 4;
-                    } else {
-                        self.cpu.regs[LR_INDEX] = (self.cpu.regs[PC_INDEX] - 2) | 1;
-                    }
+                    //没有流水线, 无需调整
+                    self.cpu.regs[LR_INDEX] = self.cpu.regs[PC_INDEX];
                     self.bw_write_pc(target);
                 }
                 _ => unreachable!(),
@@ -227,8 +224,9 @@ impl Machine {
                 self.write(d, m.leading_zeros())?;
             }
             Opcode::CMN | Opcode::CMP => {
-                let n = self.read(inst.operands[0])?;
-                let m = self.read(inst.operands[1])?;
+                //inst.operands[0] 是 rd
+                let n = self.read(inst.operands[1])?;
+                let m = self.read(inst.operands[2])?;
                 let (result, carry, overflow) = match inst.opcode {
                     Opcode::CMN => add_with_carry(n, m, false),
                     Opcode::CMP => add_with_carry(n, !m, true),
@@ -236,7 +234,7 @@ impl Machine {
                 };
                 let mut apsr = self.cpu.apsr_mut();
                 apsr.set_n(result >> 31 & 1 == 1);
-                apsr.set_z(result != 0);
+                apsr.set_z(result == 0);
                 apsr.set_c(carry);
                 apsr.set_v(overflow);
             }
@@ -278,7 +276,10 @@ impl Machine {
                     } else {
                         self.load_write_pc(self.read_memory_word(address)?);
                     }
-                    address += 4 * add;
+                    if (registers >> (i + 1)).count_ones() > 0 {
+                        //最后一个不改address
+                        address += 4 * add;
+                    }
                 }
                 //inst.operands[0]一定是RegWBack
                 self.write(inst.operands[0], address)?;
@@ -339,7 +340,7 @@ impl Machine {
                 if inst.s {
                     let mut apsr = self.cpu.apsr_mut();
                     apsr.set_n(result >> 31 & 1 == 1);
-                    apsr.set_z(result != 0);
+                    apsr.set_z(result == 0);
                 }
             }
             Opcode::MLS => {
@@ -362,7 +363,10 @@ impl Machine {
             Opcode::MRS => self.write(inst.operands[0], self.read(inst.operands[1])?)?,
             //TODO MSR banked register
             Opcode::MSR => self.write(inst.operands[0], self.read(inst.operands[1])?)?,
-            Opcode::NOP => {}
+            Opcode::NOP => {
+                //用于断点
+                return Ok(());
+            }
             Opcode::PKHBT => {
                 let d = inst.operands[0];
                 let n = self.read(inst.operands[1])?;
@@ -419,8 +423,8 @@ impl Machine {
             }
             Opcode::QADD16 | Opcode::UQADD16 => {
                 let d = inst.operands[0];
-                let m = self.read(inst.operands[1])?;
-                let n = self.read(inst.operands[2])?;
+                let n = self.read(inst.operands[1])?;
+                let m = self.read(inst.operands[2])?;
                 let (sum1, sum2) = match inst.opcode {
                     Opcode::QADD16 => (
                         signed_sat(
@@ -675,7 +679,13 @@ impl Machine {
                 let msb = lsb + width;
                 self.write(
                     d,
-                    n.view_bits::<Lsb0>().get(lsb..msb).unwrap().load::<i32>() as u32,
+                    match inst.opcode {
+                        Opcode::SBFX => {
+                            n.view_bits::<Lsb0>().get(lsb..msb).unwrap().load::<i32>() as u32
+                        }
+                        Opcode::UBFX => n.view_bits::<Lsb0>().get(lsb..msb).unwrap().load::<u32>(),
+                        _ => unreachable!(),
+                    },
                 )?;
             }
             Opcode::SDIV | Opcode::UDIV => {
@@ -963,8 +973,62 @@ impl Machine {
                 self.write(d, result as u32)?;
             }
             Opcode::SRS(..) => unimplemented!(), //TODO SRS
-            Opcode::SSAT | Opcode::USAT => unimplemented!(), //TODO SSAT USAT
-            Opcode::SSAT16 | Opcode::USAT16 => unimplemented!(), //TODO SSAT16 USAT16
+            Opcode::SSAT | Opcode::USAT => {
+                let d = inst.operands[0];
+                let saturate_to = self.read(inst.operands[1])?
+                    + if let Opcode::SSAT = inst.opcode { 1 } else { 0 };
+                let n = self.read(inst.operands[2])?;
+                let (result, sat) = signed_sat_q(n as i32 as i64, saturate_to);
+                self.write(d, result)?;
+                if sat {
+                    self.cpu.apsr_mut().set_q(true);
+                }
+            }
+            Opcode::SSAT16 | Opcode::USAT16 => {
+                let d = inst.operands[0];
+                let saturate_to = self.read(inst.operands[1])?
+                    + if let Opcode::SSAT16 = inst.opcode {
+                        1
+                    } else {
+                        0
+                    };
+                let n = self.read(inst.operands[2])?;
+                let (result1, sat1) = match inst.opcode {
+                    Opcode::SSAT16 => signed_sat_q((n & 0xffff) as u16 as i16 as i64, saturate_to),
+                    Opcode::USAT16 => unsigned_sat_q((n & 0xffff) as i64, saturate_to),
+                    _ => unreachable!(),
+                };
+                let (result2, sat2) = match inst.opcode {
+                    Opcode::SSAT16 => signed_sat_q((n >> 16) as u16 as i16 as i64, saturate_to),
+                    Opcode::USAT16 => unsigned_sat_q((n >> 16) as i64, saturate_to),
+                    _ => unreachable!(),
+                };
+                self.write(
+                    d,
+                    match inst.opcode {
+                        Opcode::SSAT16 => result1
+                            .view_bits::<Lsb0>()
+                            .get(0..16)
+                            .unwrap()
+                            .load::<i16>() as i32 as u32,
+                        Opcode::USAT16 => result1,
+                        _ => unreachable!(),
+                    } << 16
+                        | match inst.opcode {
+                            Opcode::SSAT16 => result2
+                                .view_bits::<Lsb0>()
+                                .get(0..16)
+                                .unwrap()
+                                .load::<i16>() as i32
+                                as u32,
+                            Opcode::USAT16 => result2,
+                            _ => unreachable!(),
+                        } & 0xffff,
+                )?;
+                if sat1 || sat2 {
+                    self.cpu.apsr_mut().set_q(true);
+                }
+            }
             Opcode::SSAX | Opcode::USAX => {
                 let d = inst.operands[0];
                 let n = self.read(inst.operands[1])?;
@@ -1030,7 +1094,10 @@ impl Machine {
                         continue;
                     }
                     self.write_memory_word(address, self.cpu.regs[i])?;
-                    address += 4 * add;
+                    if (registers >> (i + 1)).count_ones() > 0 {
+                        //最后一个不改address
+                        address += 4 * add;
+                    }
                 }
                 //inst.operands[0]一定是RegWBack
                 self.write(inst.operands[0], address)?;
@@ -1125,7 +1192,11 @@ impl Machine {
             | Opcode::UXTH => {
                 let d = inst.operands[0];
                 let m = self.read(inst.operands[1])?;
-                let rotation = self.read(inst.operands[2])?;
+                let rotation = if let Operand::Nothing = inst.operands[2] {
+                    0
+                } else {
+                    self.read(inst.operands[2])?
+                };
                 let rotated = rotate_right(m, rotation).to_le_bytes();
                 self.write(
                     d,
@@ -1164,7 +1235,7 @@ impl Machine {
                 let result = n ^ m;
                 let mut apsr = self.cpu.apsr_mut();
                 apsr.set_n(result >> 31 & 1 == 1);
-                apsr.set_z(result != 0);
+                apsr.set_z(result == 0);
                 apsr.set_c(carry);
             }
             Opcode::TST => {
@@ -1179,7 +1250,7 @@ impl Machine {
                 let result = n & m;
                 let mut apsr = self.cpu.apsr_mut();
                 apsr.set_n(result >> 31 & 1 == 1);
-                apsr.set_z(result != 0);
+                apsr.set_z(result == 0);
                 apsr.set_c(carry);
             }
             Opcode::UDF => unimplemented!(), //TODO UDF

@@ -229,8 +229,8 @@ impl Machine {
                 )
             }
             // u32 as i32和i32 as u32都只改变解释方式
-            Operand::BranchOffset(value) => (value << 2) as u32,
-            Operand::BranchThumbOffset(value) => (value << 1) as u32,
+            Operand::BranchOffset(value) => ((value - 1) << 2) as u32,
+            Operand::BranchThumbOffset(value) => ((value - 1) << 1) as u32,
             Operand::RegWBack(reg, _wback) => self.cpu.regs[reg.number() as usize],
             Operand::RegList(registers) => registers as u32,
             Operand::RegDeref(..)
@@ -297,20 +297,34 @@ impl Machine {
                     let value = value.view_bits::<Lsb0>();
 
                     if mask >> 3 & 1 == 1 {
-                        spsr.clone_from_bitslice(value.get(24..32).unwrap()); // // N,Z,C,V,Q flags, IT<1:0>,J execution state bits
+                        // N,Z,C,V,Q flags, IT<1:0>,J execution state bits
+                        for i in 24..32 {
+                            spsr.set(i, value[i]);
+                        }
                     }
 
                     if mask >> 2 & 1 == 1 {
-                        spsr.clone_from_bitslice(value.get(16..20).unwrap()); // GE<3:0> flags
+                        // GE<3:0> flags
+                        for i in 16..20 {
+                            spsr.set(i, value[i]);
+                        }
                     }
 
                     if mask >> 1 & 1 == 1 {
-                        spsr.clone_from_bitslice(value.get(8..16).unwrap()); // IT<7:2> execution state bits, E bit, A interrupt mask
+                        // IT<7:2> execution state bits, E bit, A interrupt mask
+                        for i in 8..16 {
+                            spsr.set(i, value[i]);
+                        }
                     }
 
                     if mask & 1 == 1 {
-                        spsr.clone_from_bitslice(value.get(5..8).unwrap()); // I,F interrupt masks, T execution state bit
-                        spsr.clone_from_bitslice(value.get(0..5).unwrap());
+                        // I,F interrupt masks, T execution state bit
+                        for i in 5..8 {
+                            spsr.set(i, value[i]);
+                        }
+                        for i in 0..5 {
+                            spsr.set(i, value[i]);
+                        }
                     }
 
                     self.cpu.spsr_mut().0 = spsr.load();
@@ -323,19 +337,31 @@ impl Machine {
                     let nmfi = false;
 
                     if mask >> 3 & 1 == 1 {
-                        cpsr.clone_from_bitslice(value.get(27..32).unwrap()); // N,Z,C,V,Q flags
+                        // N,Z,C,V,Q flags
+                        for i in 27..32 {
+                            cpsr.set(i, value[i]);
+                        }
                         if is_excpt_return {
-                            cpsr.clone_from_bitslice(value.get(24..27).unwrap()); // IT<1:0>,J execution state bits
+                            // IT<1:0>,J execution state bits
+                            for i in 24..27 {
+                                cpsr.set(i, value[i]);
+                            }
                         }
                     }
 
                     if mask >> 2 & 1 == 1 {
-                        cpsr.clone_from_bitslice(value.get(16..20).unwrap()); // GE<3:0> flags
+                        // GE<3:0> flags
+                        for i in 16..20 {
+                            cpsr.set(i, value[i]);
+                        }
                     }
 
                     if mask >> 1 & 1 == 1 {
                         if is_excpt_return {
-                            cpsr.clone_from_bitslice(value.get(10..16).unwrap()); // IT<7:2> execution state bits
+                            // IT<7:2> execution state bits
+                            for i in 10..16 {
+                                cpsr.set(i, value[i]);
+                            }
                         }
                         cpsr.set(9, value[9]); // E bit is user-writable
                         //TODO (IsSecure() Il SCR.AW == '1' Il HaveVirtExt())
@@ -357,7 +383,9 @@ impl Machine {
                         }
                         if privileged {
                             // CPSR<4:0>, mode bits
-                            cpsr.clone_from_bitslice(value.get(0..5).unwrap());
+                            for i in 0..5 {
+                                cpsr.set(i, value[i]);
+                            }
                         }
                     }
 

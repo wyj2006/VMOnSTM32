@@ -7,8 +7,8 @@ use crate::{
     vmerror::VMError,
 };
 
-const INTERNAL_SIZE: usize = 1024;
-const EXTERNAL_SIZE: usize = 1024;
+const INTERNAL_SIZE: usize = 1024 * 100;
+const EXTERNAL_SIZE: usize = 1024 * 1024;
 
 pub struct Memory {
     pub data: [u8; INTERNAL_SIZE],

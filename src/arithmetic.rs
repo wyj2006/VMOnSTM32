@@ -96,12 +96,12 @@ pub fn shift(value: u32, shift_style: ShiftStyle, amount: u32, carry_in: bool) -
 
 //P43
 pub fn add_with_carry(x: u32, y: u32, carry_in: bool) -> (u32, bool, bool) {
-    let unsigned_sum = x + y + (carry_in as u32);
-    let signed_num = (x as i32) + (y as i32) + (carry_in as i32);
-    let result = unsigned_sum & !(1 << (u32::BITS - 1)); //保留后31位
+    let unsigned_sum = x as u64 + y as u64 + (carry_in as u64);
+    let signed_num = (x as i32 as i64) + (y as i32 as i64) + (carry_in as i64);
+    let result = unsigned_sum & 0xffffffff;
     let carry_out = result != unsigned_sum;
-    let overflow = (result as i32) != signed_num;
-    (result, carry_out, overflow)
+    let overflow = (result as i64) != signed_num;
+    (result as u32, carry_out, overflow)
 }
 
 //P2368
@@ -114,8 +114,8 @@ pub fn bit_count(x: u32) -> u32 {
 }
 
 //P44
-pub fn signed_sat_q(i: i64, n: u8) -> (u32, bool) {
-    let max = (1 << (n - 1) - 1) as i64;
+pub fn signed_sat_q(i: i64, n: u32) -> (u32, bool) {
+    let max = ((1 << (n - 1)) - 1) as i64;
     let min = -(1 << (n - 1)) as i64;
     let (result, saturated) = if i > max {
         (max, true)
@@ -128,8 +128,8 @@ pub fn signed_sat_q(i: i64, n: u8) -> (u32, bool) {
 }
 
 //P44
-pub fn unsigned_sat_q(i: i64, n: u8) -> (u32, bool) {
-    let max = (1 << n) - 1 as i64;
+pub fn unsigned_sat_q(i: i64, n: u32) -> (u32, bool) {
+    let max = ((1 << n) - 1) as i64;
     let min = 0 as i64;
     let (result, saturated) = if i > max {
         (max, true)
@@ -142,17 +142,17 @@ pub fn unsigned_sat_q(i: i64, n: u8) -> (u32, bool) {
 }
 
 //P44
-pub fn signed_sat(i: i64, n: u8) -> u32 {
+pub fn signed_sat(i: i64, n: u32) -> u32 {
     signed_sat_q(i, n).0
 }
 
 //P44
-pub fn unsigned_sat(i: i64, n: u8) -> u32 {
+pub fn unsigned_sat(i: i64, n: u32) -> u32 {
     unsigned_sat_q(i, n).0
 }
 
 //P44
-pub fn sat_q(i: i64, n: u8, unsigned: bool) -> (u32, bool) {
+pub fn sat_q(i: i64, n: u32, unsigned: bool) -> (u32, bool) {
     if unsigned {
         unsigned_sat_q(i, n)
     } else {
@@ -161,7 +161,7 @@ pub fn sat_q(i: i64, n: u8, unsigned: bool) -> (u32, bool) {
 }
 
 //P44
-pub fn sat(i: i64, n: u8, unsigned: bool) -> u32 {
+pub fn sat(i: i64, n: u32, unsigned: bool) -> u32 {
     if unsigned {
         unsigned_sat(i, n)
     } else {

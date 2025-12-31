@@ -59,6 +59,7 @@ pub fn receive_data(serial: &mut ProtocolSerial) -> Result<Vec<u8>, VMError> {
     let mut data = Vec::new();
     let mut escape = false;
     loop {
+        serial.write(0xa5)?;
         let byte = serial.read()?;
         if !escape && byte == ESCAPE_CHAR {
             escape = true;

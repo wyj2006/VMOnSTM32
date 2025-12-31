@@ -27,3 +27,6 @@ default-features = false
 [dependencies.yaxpeax-arch]
 version = "0.3.2"
 default-features = false
+
+[features]
+test = []

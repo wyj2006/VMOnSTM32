@@ -1,5 +1,6 @@
 """
 单片机在准备发送数据前先发送数据0xaa, 电脑在回复0x55后才能继续传送数据
+电脑需要等待单片机发送0xa5之后才能再发下一个数据
 """
 
 import struct
@@ -7,15 +8,14 @@ import time
 
 from command import *
 from memory import *
-from serial import Serial
-from serial.tools.list_ports import comports
+from serial import *
+from serial.tools.list_ports import *
 from state import *
 
 ESCAPE_CHAR = ord("\\")
 FRAME_END = 0xFF
 
 port_name = None
-
 while port_name == None:
     print("Automatically find the correct port...", end="")
     for port in comports():
@@ -77,10 +77,12 @@ while True:
             while i < len(data):
                 if data[i] in (ESCAPE_CHAR, FRAME_END):
                     data.insert(i, ESCAPE_CHAR)
-                i += 1
+                i += 2
             data.append(FRAME_END)
-            data = bytes(data)
-            print("Send:", data)
-            serial.write(data)
-            serial.flush()
+            print("Send:", bytes(data))
+            for i in data:
+                while serial.read(1)[0] != 0xA5:
+                    pass
+                serial.write(bytes([i]))
+                serial.flush()
             state = Ready()

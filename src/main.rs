@@ -153,6 +153,13 @@ fn main() -> ! {
     interrupt::free(|cs| *SERIAL.borrow(cs).borrow_mut() = Some(ProtocolSerial {}));
 
     let mut machine = Machine::default();
+    #[cfg(feature = "test")]
+    {
+        let test_code = include_bytes!("../tests/test.bin");
+        for i in 0..test_code.len() {
+            machine.write_memory(i as u32, test_code[i]).unwrap();
+        }
+    }
     machine.run();
 }
 
