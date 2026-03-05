@@ -1,6 +1,6 @@
 """
-单片机在准备发送数据前先发送数据0xaa, 电脑在回复0x55后才能继续传送数据
-电脑需要等待单片机发送0xa5之后才能再发下一个数据
+单片机在准备发送数据前先发送数据 READY_INQ , 电脑在回复 READY_ACK 后才能继续传送数据
+电脑需要等待单片机发送 RECV_ACK 之后才能再发下一个数据
 """
 
 import struct
@@ -14,6 +14,9 @@ from state import *
 
 ESCAPE_CHAR = ord("\\")
 FRAME_END = 0xFF
+READY_INQ = 0xAA
+READY_ACK = 0x55
+RECV_ACK = 0xA5
 
 port_name = None
 while port_name == None:
@@ -36,8 +39,8 @@ while True:
     match state:
         case Ready():
             byte = serial.read(1)[0]
-            if byte == 0xAA:
-                serial.write(bytes([0x55]))
+            if byte == READY_INQ:
+                serial.write(bytes([READY_ACK]))
                 serial.flush()
                 state = ReceiveHead()
             else:
@@ -81,7 +84,7 @@ while True:
             data.append(FRAME_END)
             print("Send:", bytes(data))
             for i in data:
-                while serial.read(1)[0] != 0xA5:
+                while serial.read(1)[0] != RECV_ACK:
                     pass
                 serial.write(bytes([i]))
                 serial.flush()

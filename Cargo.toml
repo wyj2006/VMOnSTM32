@@ -8,25 +8,18 @@ overflow-checks = false
 
 [dependencies]
 bitfield = "0.19.4"
-cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
-embedded-hal = "1.0.0"
+cortex-m-semihosting = "0.5.0"
+funty = { version = "2.0.0", default-features = false}
 linked_list_allocator = "0.10.5"
 nb = "1.1.0"
-stm32h7 = { version = "0.16.0", features = ["stm32h723", "rt"] }
+stm32h7xx-hal = { version = "0.16.0", features = ["stm32h743", "rt"] }
 
 [dependencies.bitvec]
 version = "1.0.1"
 default-features = false
 features = ["atomic","alloc"]
-
-[dependencies.yaxpeax-arm]
-path = "yaxpeax-arm"
-default-features = false
-
-[dependencies.yaxpeax-arch]
-version = "0.3.2"
-default-features = false
 
 [features]
 test = []

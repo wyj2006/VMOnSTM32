@@ -1,13 +1,9 @@
 class Memory:
     def __init__(self):
-        self.data = []
+        self.data = {}
 
     def read(self, address: int):
-        while address >= len(self.data):
-            self.data.append(0)
-        return self.data[address]
+        return self.data.setdefault(address, 0)
 
     def write(self, address: int, value: int):
-        while address >= len(self.data):
-            self.data.append(0)
         self.data[address] = value

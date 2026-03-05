@@ -24,3 +24,4 @@ class ReceiveData:
 class Process:
     command: Command
     data: list
+    data: list

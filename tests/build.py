@@ -1,28 +1,53 @@
 import os
+import subprocess
+import sys
 
-os.chdir(os.path.dirname(__file__))
-test_code = f"mov sp, #{1024*50}\n"
+filepath = sys.argv[1]
+filename, ext = os.path.splitext(filepath)
 
-for i, file_name in enumerate(os.listdir("executor")):
-    file_path = os.path.join("executor", file_name)
-    test_code += f"test_{os.path.splitext(file_name)[0]}:\n"
-    test_code += f"mov r8, #{i}\n"  # r8存放当前测试编号
-    test_code += open(file_path, encoding="utf-8").read()
-    test_code += "\n\n"
 
-# r9表示测试是否通过
-test_code += """
-success:
-    mov r9, #1
-    nop
-    b success
-fail:
-    mov r9, #0
-    nop
-    b fail
-"""
+def run(*args, stdout=None):
+    subprocess.run(
+        args,
+        check=True,
+        stdout=stdout,
+        stderr=subprocess.STDOUT,
+        text=True,
+        universal_newlines=True,
+    )
 
-open("test.s", mode="w", encoding="utf-8").write(test_code)
-os.system("arm-none-eabi-as -mcpu=cortex-a7 -g test.s -o test.o")
-os.system("arm-none-eabi-ld test.o -o test.elf")
-os.system("arm-none-eabi-objcopy -O binary test.elf test.bin")
+
+match ext:
+    case ".s":
+        run(
+            "riscv32-unknown-elf-as",
+            filepath,
+            "-o",
+            f"{filename}.o",
+            "-march=rv32i",
+        )
+    case ".c":
+        run(
+            "riscv32-unknown-elf-gcc",
+            filepath,
+            "-o",
+            f"{filename}.o",
+            "-c",
+            "-march=rv32i",
+            "-mabi=ilp32",
+        )
+
+run(
+    "riscv32-unknown-elf-ld",
+    f"{filename}.o",
+    "-o",
+    f"{filename}.elf",
+)
+
+run(
+    "riscv32-unknown-elf-objcopy",
+    "-O",
+    "binary",
+    f"{filename}.elf",
+    f"{filename}.bin",
+)

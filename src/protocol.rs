@@ -1,13 +1,18 @@
 extern crate alloc;
-use crate::{serial::ProtocolSerial, vmerror::VMError};
+
+use crate::{ProtocolSerial, exception::Exception};
 use alloc::vec::Vec;
+use cortex_m::prelude::{_embedded_hal_serial_Read, _embedded_hal_serial_Write};
 
 pub const ESCAPE_CHAR: u8 = b'\\';
 pub const FRAME_END: u8 = 0xff;
+pub const READY_INQ: u8 = 0xaa;
+pub const READY_ACK: u8 = 0x55;
+pub const RECV_ACK: u8 = 0xa5;
 
 pub enum Command {
-    ReadMemory(u32),
-    WriteMemory(u32, u8),
+    ReadMemory(usize),
+    WriteMemory(usize, u8),
 }
 
 impl Command {
@@ -29,37 +34,36 @@ impl Command {
         }
     }
 
-    pub fn send(&self, serial: &mut ProtocolSerial) -> Result<(), VMError> {
-        ensure_ready(serial)?;
+    pub fn send(&self, serial: &mut ProtocolSerial) -> Result<(), Exception> {
+        loop {
+            serial.write(READY_INQ)?;
+            serial.flush()?;
+            if serial.read()? == READY_ACK {
+                break;
+            }
+        }
+
         serial.write(self.head())?;
+
         for i in self.data() {
             if i == ESCAPE_CHAR || i == FRAME_END {
                 serial.write(ESCAPE_CHAR)?;
             }
             serial.write(i)?;
         }
+
         serial.write(FRAME_END)?;
         serial.flush()?;
+
         Ok(())
     }
 }
 
-pub fn ensure_ready(serial: &mut ProtocolSerial) -> Result<(), VMError> {
-    loop {
-        serial.write(0xaa)?;
-        serial.flush()?;
-        if serial.read()? == 0x55 {
-            break;
-        }
-    }
-    Ok(())
-}
-
-pub fn receive_data(serial: &mut ProtocolSerial) -> Result<Vec<u8>, VMError> {
+pub fn receive_data(serial: &mut ProtocolSerial) -> Result<Vec<u8>, Exception> {
     let mut data = Vec::new();
     let mut escape = false;
     loop {
-        serial.write(0xa5)?;
+        serial.write(RECV_ACK)?;
         let byte = serial.read()?;
         if !escape && byte == ESCAPE_CHAR {
             escape = true;
