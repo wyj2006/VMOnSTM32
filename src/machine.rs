@@ -1,8 +1,8 @@
 use crate::{
     cpu::{CPU, Mode},
-    exception::Exception,
     memory::Memory,
     register::MachineStatus,
+    vm_exception::VMException,
 };
 
 pub static MEMORY_SIZE: usize = 1024;
@@ -29,7 +29,7 @@ impl Default for Machine {
 }
 
 impl Machine {
-    pub fn trap(&mut self, exception: Exception) {
+    pub fn trap(&mut self, exception: VMException) {
         self.cpu.mcause = exception.cause();
         self.cpu.mtval = exception.trap_value();
 
@@ -50,7 +50,7 @@ impl Machine {
 
     pub fn run(mut self) -> ! {
         loop {
-            if let Err(e) = (|| -> Result<(), Exception> {
+            if let Err(e) = (|| -> Result<(), VMException> {
                 let pc = self.cpu.pc as usize;
                 self.cpu.pc += 4;
                 let inst = self.cpu.decode(self.memory.read::<u32>(pc)?)?;

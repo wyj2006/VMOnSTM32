@@ -3,19 +3,19 @@
 
 pub mod cpu;
 pub mod decode;
-pub mod exception;
 pub mod execute;
 pub mod machine;
 pub mod memory;
 pub mod protocol;
 pub mod register;
+pub mod vm_exception;
 
 use crate::machine::Machine;
 use core::{cell::RefCell, panic::PanicInfo};
 use cortex_m::interrupt::{self, Mutex};
-use cortex_m_rt::entry;
-use cortex_m_semihosting::hprintln;
+use cortex_m_rt::{ExceptionFrame, entry, exception};
 use linked_list_allocator::LockedHeap;
+use object::{File, Object, ObjectSection};
 use stm32h7xx_hal::{
     pac::{Peripherals, USART2},
     prelude::*,
@@ -58,17 +58,30 @@ fn main() -> ! {
 
     let mut machine = Machine::default();
     if cfg!(feature = "test") {
-        let test_code = include_bytes!("../tests/test.bin");
-        for i in 0..test_code.len() {
-            machine.memory.write(i, test_code[i]).unwrap();
-        }
+        machine.cpu.xregs[2] = 1024; // sp
+        load_elf(&mut machine, include_bytes!("../tests/test.elf"));
     }
     machine.run();
 }
 
+fn load_elf(machine: &mut Machine, file_data: &[u8]) {
+    let file = File::parse(file_data).unwrap();
+    for section in file.sections() {
+        let address = section.address() as usize;
+        for (i, v) in section.data().unwrap().iter().enumerate() {
+            machine.memory.write(address + i, *v).unwrap();
+        }
+    }
+    machine.cpu.pc = file.entry() as u32;
+}
+
 #[inline(never)]
 #[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    hprintln!("{:?}", info);
+fn panic(_info: &PanicInfo) -> ! {
+    loop {}
+}
+
+#[exception]
+unsafe fn HardFault(_ef: &ExceptionFrame) -> ! {
     loop {}
 }

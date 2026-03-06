@@ -2,7 +2,7 @@ use core::convert::Infallible;
 use stm32h7xx_hal::serial;
 
 #[derive(Debug)]
-pub enum Exception {
+pub enum VMException {
     SSofwareInterrupt,
     MSofwareInterrupt,
     STimerInterrupt,
@@ -15,19 +15,19 @@ pub enum Exception {
     StoreAccessFault,
 }
 
-impl Exception {
+impl VMException {
     // mcause寄存器中的内容
     pub fn cause(&self) -> u32 {
         match self {
-            Exception::SSofwareInterrupt => 1 << 31 | 1,
-            Exception::MSofwareInterrupt => 1 << 31 | 3,
-            Exception::STimerInterrupt => 1 << 31 | 5,
-            Exception::MTimerInterrupt => 1 << 31 | 7,
-            Exception::SExternalInterrupt => 1 << 31 | 9,
-            Exception::MExternalInterrupt => 1 << 31 | 11,
-            Exception::IllegalInstruction => 2,
-            Exception::LoadAccessFault => 5,
-            Exception::StoreAccessFault => 7,
+            VMException::SSofwareInterrupt => 1 << 31 | 1,
+            VMException::MSofwareInterrupt => 1 << 31 | 3,
+            VMException::STimerInterrupt => 1 << 31 | 5,
+            VMException::MTimerInterrupt => 1 << 31 | 7,
+            VMException::SExternalInterrupt => 1 << 31 | 9,
+            VMException::MExternalInterrupt => 1 << 31 | 11,
+            VMException::IllegalInstruction => 2,
+            VMException::LoadAccessFault => 5,
+            VMException::StoreAccessFault => 7,
         }
     }
 
@@ -39,13 +39,13 @@ impl Exception {
     }
 }
 
-impl From<nb::Error<Infallible>> for Exception {
+impl From<nb::Error<Infallible>> for VMException {
     fn from(value: nb::Error<Infallible>) -> Self {
         panic!("{value:?}")
     }
 }
 
-impl From<nb::Error<serial::Error>> for Exception {
+impl From<nb::Error<serial::Error>> for VMException {
     fn from(value: nb::Error<serial::Error>) -> Self {
         panic!("{value:?}")
     }

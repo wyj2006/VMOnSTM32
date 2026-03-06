@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use crate::{ProtocolSerial, exception::Exception};
+use crate::{ProtocolSerial, vm_exception::VMException};
 use alloc::vec::Vec;
 use cortex_m::prelude::{_embedded_hal_serial_Read, _embedded_hal_serial_Write};
 
@@ -34,7 +34,7 @@ impl Command {
         }
     }
 
-    pub fn send(&self, serial: &mut ProtocolSerial) -> Result<(), Exception> {
+    pub fn send(&self, serial: &mut ProtocolSerial) -> Result<(), VMException> {
         loop {
             serial.write(READY_INQ)?;
             serial.flush()?;
@@ -59,7 +59,7 @@ impl Command {
     }
 }
 
-pub fn receive_data(serial: &mut ProtocolSerial) -> Result<Vec<u8>, Exception> {
+pub fn receive_data(serial: &mut ProtocolSerial) -> Result<Vec<u8>, VMException> {
     let mut data = Vec::new();
     let mut escape = false;
     loop {

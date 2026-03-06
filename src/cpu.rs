@@ -1,6 +1,7 @@
 use crate::register::MachineStatus;
 
-pub static REG_MAX_NUM: usize = 32;
+pub static XREG_MAX_NUM: usize = 32;
+pub static DREG_MAX_NUM: usize = 32;
 
 #[derive(Default, Clone, Copy)]
 pub enum Mode {
@@ -24,7 +25,8 @@ impl From<u32> for Mode {
 pub struct CPU {
     pub mode: Mode,
 
-    pub regs: [u32; REG_MAX_NUM],
+    pub xregs: [u32; XREG_MAX_NUM],
+    pub dregs: [f64; DREG_MAX_NUM],
     pub pc: u32,
 
     pub mtvec: u32,

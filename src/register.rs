@@ -1,6 +1,6 @@
 use bitfield::bitfield;
 
-use crate::{cpu::CPU, exception::Exception};
+use crate::{cpu::CPU, vm_exception::VMException};
 
 bitfield! {
     pub struct MachineStatus(u32);
@@ -32,14 +32,14 @@ impl Default for MachineStatus {
 
 impl CPU {
     // 偷个懒, 用for_write表示需要读还是写
-    pub fn get_csr_mut(&mut self, address: u32, for_write: bool) -> Result<&mut u32, Exception> {
+    pub fn get_csr_mut(&mut self, address: u32, for_write: bool) -> Result<&mut u32, VMException> {
         let mode = address >> 8 & 0b11;
         if (self.mode as u32) < mode {
-            return Err(Exception::IllegalInstruction);
+            return Err(VMException::IllegalInstruction);
         }
 
         match (address >> 10 & 0b11, for_write) {
-            (0b01, true) | (0b10, false) => return Err(Exception::IllegalInstruction),
+            (0b01, true) | (0b10, false) => return Err(VMException::IllegalInstruction),
             _ => {}
         }
 
@@ -52,7 +52,7 @@ impl CPU {
             0x342 => Ok(&mut self.mcause),
             0x343 => Ok(&mut self.mtval),
             0x344 => Ok(&mut self.mip),
-            _ => Err(Exception::IllegalInstruction),
+            _ => Err(VMException::IllegalInstruction),
         }
     }
 }

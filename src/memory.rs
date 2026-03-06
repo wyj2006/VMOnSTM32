@@ -2,8 +2,8 @@ extern crate alloc;
 
 use crate::{
     SERIAL,
-    exception::Exception,
     protocol::{Command, receive_data},
+    vm_exception::VMException,
 };
 use alloc::vec::Vec;
 use bitvec::{field::BitField, order::Lsb0, view::BitView};
@@ -11,7 +11,7 @@ use core::cmp::min;
 use cortex_m::interrupt;
 use funty::Integral;
 
-pub static MEM_INTERNAL_SIZE: usize = 1024 * 200;
+pub static MEM_INTERNAL_SIZE: usize = 1024 * 100;
 pub static MEM_EXTERNAL_SIZE: usize = 1024 * 1024;
 
 pub struct Memory {
@@ -31,21 +31,21 @@ impl Memory {
         MEM_INTERNAL_SIZE + MEM_EXTERNAL_SIZE
     }
 
-    pub fn read<T: Integral>(&self, address: usize) -> Result<T, Exception> {
+    pub fn read<T: Integral>(&self, address: usize) -> Result<T, VMException> {
         if address >= self.size() {
-            return Err(Exception::LoadAccessFault);
+            return Err(VMException::LoadAccessFault);
         }
         let mut bytes = Vec::new();
 
         let mut i = 0;
-        while i < 4 as usize && address + i < MEM_INTERNAL_SIZE {
+        while i < T::BITS.div_ceil(8) as usize && address + i < MEM_INTERNAL_SIZE {
             bytes.push(self.data[address + i]);
             i += 1;
         }
 
-        interrupt::free(|cs| -> Result<(), Exception> {
+        interrupt::free(|cs| -> Result<(), VMException> {
             if let Some(serial) = SERIAL.borrow(cs).borrow_mut().as_mut() {
-                while i < 4 && address + i < MEM_EXTERNAL_SIZE {
+                while i < T::BITS.div_ceil(8) as usize && address + i < MEM_EXTERNAL_SIZE {
                     Command::ReadMemory(address + i).send(serial)?;
                     bytes.extend(receive_data(serial)?);
                     i += 1;
@@ -67,9 +67,9 @@ impl Memory {
         &mut self,
         address: usize,
         value: T,
-    ) -> Result<(), Exception> {
+    ) -> Result<(), VMException> {
         if address >= self.size() {
-            return Err(Exception::StoreAccessFault);
+            return Err(VMException::StoreAccessFault);
         }
 
         let mut bytes = Vec::new();
@@ -88,7 +88,7 @@ impl Memory {
             i += 1;
         }
 
-        interrupt::free(|cs| -> Result<(), Exception> {
+        interrupt::free(|cs| -> Result<(), VMException> {
             if let Some(serial) = SERIAL.borrow(cs).borrow_mut().as_mut() {
                 while i < bytes.len() && address + i < MEM_EXTERNAL_SIZE {
                     Command::WriteMemory(address + i, bytes[i]).send(serial)?;

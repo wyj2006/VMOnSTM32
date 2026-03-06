@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 
+arch = "rv32imfd"
 filepath = sys.argv[1]
 filename, ext = os.path.splitext(filepath)
 
@@ -24,7 +25,7 @@ match ext:
             filepath,
             "-o",
             f"{filename}.o",
-            "-march=rv32i",
+            f"-march={arch}",
         )
     case ".c":
         run(
@@ -33,8 +34,8 @@ match ext:
             "-o",
             f"{filename}.o",
             "-c",
-            "-march=rv32i",
-            "-mabi=ilp32",
+            f"-march={arch}",
+            "-mabi=ilp32d",
         )
 
 run(
@@ -42,12 +43,4 @@ run(
     f"{filename}.o",
     "-o",
     f"{filename}.elf",
-)
-
-run(
-    "riscv32-unknown-elf-objcopy",
-    "-O",
-    "binary",
-    f"{filename}.elf",
-    f"{filename}.bin",
 )

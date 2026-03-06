@@ -12,6 +12,7 @@ cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
 cortex-m-semihosting = "0.5.0"
 funty = { version = "2.0.0", default-features = false}
+libm = "0.2.16"
 linked_list_allocator = "0.10.5"
 nb = "1.1.0"
 stm32h7xx-hal = { version = "0.16.0", features = ["stm32h743", "rt"] }
@@ -19,7 +20,12 @@ stm32h7xx-hal = { version = "0.16.0", features = ["stm32h743", "rt"] }
 [dependencies.bitvec]
 version = "1.0.1"
 default-features = false
-features = ["atomic","alloc"]
+features = ["atomic", "alloc"]
+
+[dependencies.object]
+version = "0.38.1"
+default-features = false
+features = ["elf", "read"]
 
 [features]
 test = []
