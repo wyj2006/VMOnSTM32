@@ -48,6 +48,7 @@ pub enum Opcode {
     Lui,
     MRet,
     Or,
+    SFenceVMA,
     Sll,
     // is_unsigned
     Slt(bool),
@@ -418,6 +419,10 @@ impl CPU {
                     }),
                     _ => unreachable!(),
                 },
+                0b0001001 => Ok(Instruction {
+                    opcode: Opcode::SFenceVMA,
+                    operand: [Operand::XReg(rs1), Operand::XReg(rs2), Operand::Nothing],
+                }),
                 0b0011000 => Ok(Instruction {
                     opcode: Opcode::MRet,
                     operand: [Operand::Nothing, Operand::Nothing, Operand::Nothing],

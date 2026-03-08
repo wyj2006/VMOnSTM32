@@ -2,6 +2,7 @@ use core::convert::Infallible;
 use stm32h7xx_hal::serial;
 
 #[derive(Debug)]
+#[repr(u32)]
 pub enum VMException {
     SSofwareInterrupt,
     MSofwareInterrupt,
@@ -10,9 +11,20 @@ pub enum VMException {
     SExternalInterrupt,
     MExternalInterrupt,
 
+    InstAddressMisaligned,
+    InstAccessFault,
     IllegalInstruction,
+    Breakpoint,
+    LoadAddrMisaligned,
     LoadAccessFault,
+    StoreAddrMisaligned,
     StoreAccessFault,
+    ECallFromUMode,
+    ECallFromSMode,
+    ECallFromMMode,
+    InstPageFault,
+    LoadPageFault,
+    StorePageFault,
 }
 
 impl VMException {
@@ -25,9 +37,20 @@ impl VMException {
             VMException::MTimerInterrupt => 1 << 31 | 7,
             VMException::SExternalInterrupt => 1 << 31 | 9,
             VMException::MExternalInterrupt => 1 << 31 | 11,
+            VMException::InstAddressMisaligned => 0,
+            VMException::InstAccessFault => 1,
             VMException::IllegalInstruction => 2,
+            VMException::Breakpoint => 3,
+            VMException::LoadAddrMisaligned => 4,
             VMException::LoadAccessFault => 5,
+            VMException::StoreAddrMisaligned => 6,
             VMException::StoreAccessFault => 7,
+            VMException::ECallFromUMode => 8,
+            VMException::ECallFromSMode => 9,
+            VMException::ECallFromMMode => 11,
+            VMException::InstPageFault => 12,
+            VMException::LoadPageFault => 13,
+            VMException::StorePageFault => 15,
         }
     }
 

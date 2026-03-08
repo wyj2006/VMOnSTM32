@@ -1,5 +1,5 @@
 use crate::{
-    cpu::Mode,
+    cpu::{MStatus, Mode, SStatus},
     decode::{Condition, DataType, DataWidth, Instruction, Opcode, Operand, SignJoinKind},
     machine::Machine,
     vm_exception::VMException,
@@ -12,7 +12,7 @@ impl Machine {
         Ok(match operand {
             Operand::Imm(t) => t,
             Operand::XReg(t) => self.cpu.xregs[t],
-            Operand::Csr(address) => *self.cpu.get_csr_mut(address, false)?,
+            Operand::Csr(address) => self.cpu.get_csr(address)?,
             _ => unreachable!(),
         })
     }
@@ -33,8 +33,12 @@ impl Machine {
 
     pub fn writei(&mut self, operand: Operand, value: u32) -> Result<(), VMException> {
         match operand {
-            Operand::XReg(t) => self.cpu.xregs[t] = value,
-            Operand::Csr(address) => *self.cpu.get_csr_mut(address, true)? = value,
+            Operand::XReg(t) => {
+                if t != 0 {
+                    self.cpu.xregs[t] = value;
+                }
+            }
+            Operand::Csr(address) => self.cpu.set_csr(address, value)?,
             _ => unreachable!(),
         }
         Ok(())
@@ -224,16 +228,14 @@ impl Machine {
                 let rs1 = self.readi(inst.operand[1])?;
                 let imm = self.readi(inst.operand[2])?;
 
-                let address = (rs1 + imm) as usize;
+                let address = self.translate_address((rs1 + imm) as usize)?;
                 match data_type {
-                    DataType::Double => self.writed(
-                        rd,
-                        f64::from_le_bytes(self.memory.read::<u64>(address)?.to_le_bytes()),
-                    )?,
-                    DataType::Float => self.writef(
-                        rd,
-                        f32::from_le_bytes(self.memory.read::<u32>(address)?.to_le_bytes()),
-                    )?,
+                    DataType::Double => {
+                        self.writed(rd, f64::from_bits(self.memory.read::<u64>(address)?))?
+                    }
+                    DataType::Float => {
+                        self.writef(rd, f32::from_bits(self.memory.read::<u32>(address)?))?
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -336,18 +338,15 @@ impl Machine {
                 let rs1 = self.readi(inst.operand[0])?;
                 let imm = self.readi(inst.operand[2])?;
 
-                let address = (rs1 + imm) as usize;
+                let address = self.translate_address((rs1 + imm) as usize)?;
                 match data_type {
                     DataType::Double => {
                         let rs2 = self.readd(inst.operand[1])?;
-                        let bits = rs2.to_bits();
-                        self.memory.write(address, (bits & 0xffffffff) as u32)?;
-                        self.memory.write(address + 4, (bits >> 32) as u32)?;
+                        self.memory.write(address, rs2.to_bits())?;
                     }
                     DataType::Float => {
                         let rs2 = self.readf(inst.operand[1])?;
-                        self.memory
-                            .write(address, u32::from_le_bytes(rs2.to_le_bytes()))?;
+                        self.memory.write(address, rs2.to_bits())?;
                     }
                     _ => unreachable!(),
                 }
@@ -387,7 +386,7 @@ impl Machine {
                 let rs1 = self.readi(inst.operand[1])?;
                 let imm = self.readi(inst.operand[2])?;
 
-                let address = (rs1 + imm) as usize;
+                let address = self.translate_address((rs1 + imm) as usize)?;
                 self.writei(
                     rd,
                     match data_width {
@@ -432,7 +431,7 @@ impl Machine {
                 let rs2 = self.readi(inst.operand[1])?;
                 let imm = self.readi(inst.operand[2])?;
 
-                let address = (rs1 + imm) as usize;
+                let address = self.translate_address((rs1 + imm) as usize)?;
                 match data_width {
                     DataWidth::Byte => self.memory.write(address, rs2 as u8)?,
                     DataWidth::HalfWord => self.memory.write(address, rs2 as u16)?,
@@ -459,11 +458,16 @@ impl Machine {
             }
             Opcode::MRet => {
                 self.check_mode(Mode::Machine)?;
-                self.cpu.pc = self.cpu.mepc;
-                self.cpu.mstatus.set_mie(self.cpu.mstatus.mpie());
-                self.cpu.mode = Mode::from(self.cpu.mstatus.mpp());
-            }
+                self.cpu.pc = self.cpu.mepc();
 
+                let mut mstatus = MStatus(self.cpu.mstatus());
+                mstatus.set_mie(mstatus.mpie());
+                self.cpu.mode = Mode::from(mstatus.mpp());
+                self.cpu.set_mstatus(mstatus.0);
+            }
+            Opcode::SFenceVMA => {
+                //没有缓存机制, 无需刷新
+            }
             Opcode::Sll | Opcode::Srl | Opcode::Sra => {
                 let rd = inst.operand[0];
                 let rs1 = self.readi(inst.operand[1])?;
@@ -495,8 +499,13 @@ impl Machine {
                 )?;
             }
             Opcode::SRet => {
-                self.check_mode(Mode::Machine)?;
-                todo!();
+                self.check_mode(Mode::Supervisor)?;
+                self.cpu.pc = self.cpu.sepc();
+
+                let mut sstatus = SStatus(self.cpu.sstatus());
+                sstatus.set_sie(sstatus.spie());
+                self.cpu.mode = Mode::from(sstatus.spp() as u32);
+                self.cpu.set_sstatus(sstatus.0);
             }
             Opcode::Wfi => {
                 self.check_mode(Mode::Machine)?;
