@@ -1,7 +1,8 @@
-/target
+.mxproject
+CMakePresets.json
+startup_stm32h743xx.s
+Drivers
+cmake
 .vscode
-__pycache__
-Cargo.lock
-*.o
-*.elf
-*.bin
+.clangd
+build
